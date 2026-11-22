@@ -306,8 +306,10 @@ test("Dot outbox includes autonomous final text, but stops at an unfinished gene
   ]);
 });
 test("native setup reads only metadata and resolves installed or uniquely running versions", () => {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "native-resolution-test-"),
+  // macOS exposes its temporary directory through /var -> /private/var.
+  // Use the real fixture path without relaxing the installer's symlink checks.
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "native-resolution-test-")),
   );
   try {
     const first = path.join(root, "a".repeat(16), "codex.exe"),
