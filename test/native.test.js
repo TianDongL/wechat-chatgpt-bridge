@@ -184,6 +184,61 @@ test("native account changes are refused before any API request", async () => {
   });
   await assert.rejects(provider.connection("/unused"), /account_changed/);
 });
+test("a final completed behind the cursor reconciles only its exact pending user turn", () => {
+  const c = chat();
+  c.mapping[user] = message(user, "user", "prompt", "root");
+  c.mapping[answer] = message(
+    answer,
+    "assistant",
+    "source\r\n\n<div>x</div>",
+    user,
+    1800000000,
+    { channel: "final", end_turn: false },
+  );
+  c.current_node = answer;
+  const first = web.outgoingPage(c, user, 1799999999000);
+  assert.equal(first.entries.at(-1).finished_turn, false);
+  c.mapping[answer].message.end_turn = true;
+  const fixed = web.outgoingPage(c, answer, 1799999999000, undefined, user);
+  assert.deepEqual(fixed.entries, []);
+  assert.equal(fixed.completed.id, answer);
+  assert.equal(fixed.completed.user_id, user);
+  assert.equal(fixed.completed.text, "source\r\n\n<div>x</div>");
+  assert.equal(web.outgoingPage(c, answer, 1799999999000).completed, undefined);
+  assert.equal(
+    web.outgoingPage(c, answer, 1799999999000, undefined, origin).completed,
+    undefined,
+  );
+  assert.equal(
+    web.outgoingPage(c, answer, 1800000001000, undefined, user).completed,
+    undefined,
+  );
+  for (const update of [
+    { status: "in_progress" },
+    { status: "finished_successfully", metadata: { is_complete: false } },
+    { metadata: { is_visually_hidden_from_conversation: true } },
+    { metadata: {}, channel: "analysis" },
+    { channel: "final", recipient: "python" },
+  ]) {
+    Object.assign(c.mapping[answer].message, update);
+    assert.equal(
+      web.outgoingPage(c, answer, 0, undefined, user).completed,
+      undefined,
+    );
+  }
+});
+test("readback acknowledgement can reconcile a final already consumed before confirmation", () => {
+  const before = chat(),
+    receipt = web.makeReceipt(before, input.text, 1800000000000);
+  const c = chat();
+  c.mapping[user] = message(user, "user", input.text, "root");
+  c.mapping[answer] = message(answer, "assistant", "completed", user);
+  c.current_node = answer;
+  const result = web.outgoingPage(c, answer, 1799999999000, receipt);
+  assert.equal(result.confirmation.message_id, user);
+  assert.equal(result.completed.user_id, user);
+  assert.equal(result.completed.finished_turn, true);
+});
 const identity = {
   dot: "synthetic-dot",
   room: "synthetic-room",

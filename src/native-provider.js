@@ -158,11 +158,12 @@ export class NativeProvider {
       return { status: "not_dispatched", reason: "navigation_changed" };
     return this.call("post", expectedUrl, { text, request_id: requestId });
   }
-  async poll({ url, cursor, openedAt, receipt }) {
+  async poll({ url, cursor, openedAt, receipt, pendingUserId }) {
     return this.call("outbox", url, {
       after: cursor ?? "",
       opened_at: openedAt,
       ...(receipt ? { receipt } : {}),
+      ...(pendingUserId ? { pending_user_id: pendingUserId } : {}),
     });
   }
   async dotCall(operation, input) {

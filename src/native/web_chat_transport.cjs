@@ -78,16 +78,65 @@ function confirmReceipt(chat, receipt) {
     return { status: "accepted", message_id: matches[0].id };
   return { status: matches.length > 1 ? "ambiguous" : "pending" };
 }
-function outgoingPage(chat, after, openedAt, receipt) {
+function turnEntry(node, userId, openedAt) {
+  const m = node.message;
+  const complete =
+    m &&
+    ["finished_successfully", "finished_error", "cancelled"].includes(
+      m.status,
+    ) &&
+    !(
+      m.status === "finished_successfully" && m.metadata?.is_complete === false
+    );
+  const visible =
+    m?.author?.role === "assistant" &&
+    (m.channel === "final" || m.channel == null) &&
+    (!m.recipient || m.recipient === "all") &&
+    m.metadata?.is_visually_hidden_from_conversation !== true &&
+    m.create_time * 1000 >= openedAt;
+  const final =
+    complete &&
+    visible &&
+    m.status === "finished_successfully" &&
+    m.end_turn === true &&
+    m.content?.content_type === "text";
+  const text = final ? textOf(node) : null;
+  return {
+    id: node.id,
+    user_id: userId,
+    text: text?.trim() ? text : null,
+    finished_turn: !!(
+      complete &&
+      visible &&
+      (m.end_turn === true ||
+        ["finished_error", "cancelled"].includes(m.status)) &&
+      !["thoughts", "reasoning_recap"].includes(m.content?.content_type)
+    ),
+  };
+}
+function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
   const branch = selectedBranch(chat),
     index = branch.findIndex((n) => n.id === after);
   const entries = [];
-  let userId = null;
+  const confirmation = receipt ? confirmReceipt(chat, receipt) : null;
+  pendingUserId ??=
+    confirmation?.status === "accepted" ? confirmation.message_id : null;
+  let userId = null,
+    completed = null;
   for (let i = 0; i < branch.length; i++) {
     const node = branch[i],
       m = node.message;
     if (m?.author?.role === "user") userId = node.id;
-    if (i <= index) continue;
+    if (i <= index) {
+      // A final node may be completed in place after its ID was consumed, or
+      // the send acknowledgement may arrive after the outbox read. Reconcile
+      // only the exact pending user turn, without rewinding the cursor.
+      if (pendingUserId && userId === pendingUserId) {
+        const entry = turnEntry(node, userId, openedAt);
+        if (entry.finished_turn) completed = entry;
+      }
+      continue;
+    }
     if (!m) {
       entries.push({ id: node.id, text: null, finished_turn: false });
     } else {
@@ -101,35 +150,15 @@ function outgoingPage(chat, after, openedAt, receipt) {
             m.metadata?.is_complete === false))
       )
         break;
-      const visible =
-        assistant &&
-        (m.channel === "final" || m.channel == null) &&
-        (!m.recipient || m.recipient === "all") &&
-        m.metadata?.is_visually_hidden_from_conversation !== true &&
-        m.create_time * 1000 >= openedAt;
-      const final =
-        visible &&
-        m.status === "finished_successfully" &&
-        m.end_turn === true &&
-        m.content?.content_type === "text";
-      const text = final ? textOf(node) : null;
-      entries.push({
-        id: node.id,
-        user_id: userId,
-        text: text?.trim() ? text : null,
-        finished_turn:
-          visible &&
-          (m.end_turn === true ||
-            ["finished_error", "cancelled"].includes(m.status)) &&
-          !["thoughts", "reasoning_recap"].includes(m.content?.content_type),
-      });
+      entries.push(turnEntry(node, userId, openedAt));
     }
     if (entries.length >= 10) break;
   }
   return {
     status: "page",
     entries,
-    ...(receipt ? { confirmation: confirmReceipt(chat, receipt) } : {}),
+    ...(confirmation ? { confirmation } : {}),
+    ...(completed ? { completed } : {}),
   };
 }
 async function run(input, executable, dependencies = {}) {
@@ -153,7 +182,8 @@ async function run(input, executable, dependencies = {}) {
     input.operation === "outbox" &&
     (typeof input.after !== "string" ||
       !Number.isSafeInteger(input.opened_at) ||
-      (input.receipt != null && !validReceipt(input.receipt)))
+      (input.receipt != null && !validReceipt(input.receipt)) ||
+      (input.pending_user_id != null && !uuid.test(input.pending_user_id)))
   )
     return { status: "rejected" };
   const native = dependencies.callTool ?? callTool,
@@ -216,6 +246,7 @@ async function run(input, executable, dependencies = {}) {
         input.after,
         input.opened_at,
         input.receipt,
+        input.pending_user_id,
       );
     const metadata = decode(
       await native(

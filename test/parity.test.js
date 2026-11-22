@@ -539,3 +539,70 @@ test("a completed web turn without text ends pending state and sends one clear n
   await f.bridge.pollWeb();
   assert.equal(f.sends.length, 1);
 });
+test("a completed pending turn behind the cursor is delivered once and unblocks cd without rewinding", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  await f.ingest("prompt", "1");
+  await f.bridge.drain();
+  f.bridge.state.watch.cursor = "later-hidden-node";
+  const completed = {
+    id: "final",
+    user_id: "user-1",
+    text: "complete",
+    finished_turn: true,
+  };
+  f.provider.poll = async ({ pendingUserId }) => ({
+    status: "page",
+    entries: [],
+    ...(pendingUserId ? { completed } : {}),
+  });
+  await f.bridge.pollWeb();
+  await f.bridge.flushOutgoing();
+  assert.equal(f.bridge.webPending(), undefined);
+  assert.equal(f.bridge.state.watch.cursor, "later-hidden-node");
+  assert.equal(f.sends.length, 1);
+  f.advance(31000);
+  await f.bridge.pollWeb();
+  await f.bridge.flushOutgoing();
+  assert.equal(f.sends.length, 1);
+  assert.match(
+    await f.bridge.command({ name: "switch", argument: OTHER }),
+    /已切换/,
+  );
+  assert.equal(f.posts.length, 1);
+});
+test("a final read before send acknowledgement clears later pending state without a second WeChat send", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  let acknowledge;
+  f.provider.submit = () =>
+    new Promise((resolve) => {
+      acknowledge = resolve;
+    });
+  const completed = {
+    id: "fast-final",
+    user_id: "fast-user",
+    text: "already received",
+    finished_turn: true,
+  };
+  f.provider.poll = async ({ pendingUserId }) =>
+    pendingUserId
+      ? { status: "page", entries: [], completed }
+      : { status: "page", entries: [completed] };
+  await f.ingest("fast reply", "1");
+  await f.bridge.drain({ wait: false });
+  await f.bridge.pollWeb();
+  await f.bridge.flushOutgoing();
+  assert.equal(f.sends.length, 1);
+  acknowledge({ status: "accepted", message_id: "fast-user" });
+  await f.bridge.settle();
+  assert.ok(f.bridge.webPending());
+  await f.bridge.pollWeb();
+  await f.bridge.flushOutgoing();
+  assert.equal(f.bridge.webPending(), undefined);
+  assert.equal(f.sends.length, 1);
+  assert.match(
+    await f.bridge.command({ name: "switch", argument: "dot" }),
+    /已切换/,
+  );
+});

@@ -630,6 +630,7 @@ export class Bridge {
         result = await this.provider.poll({
           ...watch,
           receipt: pending?.receipt,
+          pendingUserId: pending?.messageId,
         });
       } catch {
         result = { status: "unavailable" };
@@ -676,7 +677,16 @@ export class Bridge {
           "uncertain",
         );
       }
-      for (const entry of result.entries) {
+      const completed =
+        pending?.messageId &&
+        result.completed?.user_id === pending.messageId &&
+        result.completed?.finished_turn
+          ? result.completed
+          : null;
+      for (const entry of [
+        ...result.entries,
+        ...(completed ? [completed] : []),
+      ]) {
         await this.queueOutput(watch.url, entry, watch.url);
         if (entry.finished_turn)
           for (const [recordKey, record] of Object.entries(
@@ -701,7 +711,7 @@ export class Bridge {
               delete record.text;
             }
           }
-        this.state.watch.cursor = entry.id;
+        if (entry !== completed) this.state.watch.cursor = entry.id;
         this.save();
       }
       this.nextWebPoll =

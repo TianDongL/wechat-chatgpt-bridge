@@ -6,6 +6,7 @@ Audit the enabled production behaviors and publish an explicit feature parity ma
 
 - Add `/cd gpt`, optional Windows native GPT/Dot binding, `/cd dot`, account recent lists, titles and capability-aware help. No maintainer IDs or credentials are included.
 - Keep Dot reminders active while GPT is selected; independently poll inboxes and outboxes, reconcile uncertain writes read-only, queue known-unsent messages in FIFO order, and retain late replies and restart deduplication.
+- Reconcile the exact pending user turn even when its completed response is behind the outbox cursor. This clears stale switch guards without replaying replies or moving the cursor backwards.
 - Add owner-only local notifications, authenticated local status/stop, Windows DPAPI-protected state encryption and migration, and a locally compiled Windows Job Object host for process-tree cleanup.
 - Support observed current web DOM markers and capture the visible Copy action's original source in memory, without reading or modifying the OS clipboard; keep a rendered-text fallback.
 - Retain HTML preview links and exact source storage. Keep `/new`, `/ack`, browser debugging attachment, groups and media out of scope.
