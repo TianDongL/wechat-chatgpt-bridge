@@ -32,7 +32,12 @@
 
 ## 快速开始
 
-下载本仓库的源代码 ZIP 并解压，或克隆仓库，然后在项目目录打开终端。
+下载[源代码 ZIP](https://github.com/TianDongL/wechat-chatgpt-bridge/archive/refs/heads/main.zip) 并解压，或克隆仓库，然后在项目目录打开终端：
+
+```sh
+git clone https://github.com/TianDongL/wechat-chatgpt-bridge.git
+cd wechat-chatgpt-bridge
+```
 
 Windows 用户装好 Node.js 后，也可以双击 `setup.cmd` 完成安装与首次设置，之后双击 `start.cmd` 启动。下面是各平台的终端方式：
 

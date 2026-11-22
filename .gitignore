@@ -9,6 +9,12 @@ profile/
 browser-profile/
 credentials.json
 state.json
+settings.json
+running.lock
+.bridge-data
+private-data/
+replies/
+.auth/
 *.log
 *.sqlite*
 *.db

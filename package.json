@@ -6,6 +6,9 @@
   "type": "module",
   "license": "MIT",
   "author": "TianDongL",
+  "repository": {"type": "git", "url": "git+https://github.com/TianDongL/wechat-chatgpt-bridge.git"},
+  "bugs": {"url": "https://github.com/TianDongL/wechat-chatgpt-bridge/issues"},
+  "homepage": "https://github.com/TianDongL/wechat-chatgpt-bridge#readme",
   "engines": {"node": ">=22.13.0"},
   "scripts": {
     "browser:install": "node scripts/install-browser.js",
