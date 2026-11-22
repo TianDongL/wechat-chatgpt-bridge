@@ -182,3 +182,121 @@ test('logged-out composer is not accepted as a signed-in ready page', async t =>
   await assert.rejects(provider.send('Do not send as guest'), error => error.code === 'not_ready' && !error.uncertain);
   assert.equal(await page.evaluate(() => window.sendClicks), 0);
 });
+
+function attachedChromeFixture({ failAt } = {}) {
+  const calls = { connect: [], newPage: 0, contextClose: 0, disconnect: 0, foreignGoto: 0, foreignClose: 0 };
+  const foreign = {
+    goto: async () => { calls.foreignGoto++; }, close: async () => { calls.foreignClose++; },
+  };
+  const created = [];
+  const context = {
+    pages: () => [foreign, ...created],
+    close: async () => { calls.contextClose++; },
+    newPage: async () => {
+      calls.newPage++;
+      if (failAt === 'newPage') throw new Error('private endpoint detail');
+      let currentUrl = 'about:blank', closed = false;
+      const page = {
+        closes: 0, navigations: [],
+        url: () => currentUrl, isClosed: () => closed,
+        goto: async url => {
+          page.navigations.push(url);
+          if (failAt === 'goto') throw new Error('private endpoint detail');
+          currentUrl = url;
+        },
+        close: async () => {
+          page.closes++; closed = true;
+          if (failAt === 'closePage') throw new Error('page already disconnected');
+        },
+        waitForFunction: async () => {},
+        evaluate: async () => ({ title: 'Synthetic Chrome page', ready: true, busy: false, draft: '', messages: [], loggedOut: false }),
+      };
+      created.push(page); return page;
+    },
+  };
+  const attached = {
+    contexts: () => failAt === 'context' ? [] : [context],
+    close: async () => { calls.disconnect++; },
+  };
+  const connectOverCDP = async (...args) => {
+    calls.connect.push(args);
+    if (failAt === 'connect') throw new Error('ws://localhost:12345/private-endpoint');
+    return attached;
+  };
+  return { calls, foreign, created, context, attached, connectOverCDP };
+}
+
+test('browser mode is explicit; managed remains default and Chrome needs no profile copy', () => {
+  assert.throws(() => new ChatGPTBrowser(), error => error.code === 'profile_required');
+  assert.equal(new ChatGPTBrowser({ profileDir: '/unused' }).browserMode, 'managed');
+  assert.equal(new ChatGPTBrowser({ browserMode: 'chrome' }).profileDir, null);
+  assert.throws(() => new ChatGPTBrowser({ browserMode: 'unknown' }), error => error.code === 'invalid_browser_mode');
+});
+
+test('Chrome attachment creates an owned tab and disconnects without touching existing tabs', async () => {
+  const f = attachedChromeFixture();
+  const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: f.connectOverCDP });
+  const state = await provider.open(URL);
+  assert.equal(state.ready, true);
+  assert.deepEqual(f.calls.connect, [['chrome', { noDefaults: true, timeout: 30000 }]]);
+  assert.equal(provider.page, f.created[0]);
+  await provider.open('https://chatgpt.com/');
+  assert.equal(f.calls.newPage, 1);
+  assert.deepEqual(f.created[0].navigations, [URL, 'https://chatgpt.com/']);
+  await provider.close(); await provider.close();
+  assert.equal(f.created[0].closes, 1);
+  assert.equal(f.calls.disconnect, 1);
+  assert.equal(f.calls.contextClose, 0);
+  assert.equal(f.calls.foreignGoto, 0);
+  assert.equal(f.calls.foreignClose, 0);
+  assert.equal(provider.page, null); assert.equal(provider.context, null);
+});
+
+test('Chrome attach failures are sanitized and disconnect every acquired connection', async () => {
+  for (const failAt of ['connect', 'context', 'newPage', 'goto']) {
+    const f = attachedChromeFixture({ failAt });
+    const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: f.connectOverCDP });
+    await assert.rejects(provider.open(URL), error => error.code === 'chrome_debugging_unavailable' &&
+      error.message === 'chrome_debugging_unavailable' && !error.uncertain);
+    assert.equal(f.calls.disconnect, failAt === 'connect' ? 0 : 1, failAt);
+    assert.equal(f.calls.contextClose, 0, failAt);
+    assert.equal(f.calls.foreignGoto, 0, failAt);
+    assert.equal(f.calls.foreignClose, 0, failAt);
+    assert.equal(provider.attachedBrowser, null, failAt);
+    if (failAt === 'goto') assert.equal(f.created[0].closes, 1);
+  }
+});
+
+test('Chrome disconnect still happens if closing the owned tab fails', async () => {
+  const f = attachedChromeFixture({ failAt: 'closePage' });
+  const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: f.connectOverCDP });
+  await provider.open(URL);
+  await assert.rejects(provider.close(), /page already disconnected/);
+  assert.equal(f.calls.disconnect, 1); assert.equal(f.calls.contextClose, 0); assert.equal(f.calls.foreignClose, 0);
+});
+
+test('manually closing the owned Chrome tab creates a fresh owned tab on reopen', async () => {
+  const f = attachedChromeFixture();
+  const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: f.connectOverCDP });
+  await provider.open(URL); await provider.page.close(); await provider.open(URL);
+  assert.equal(f.calls.newPage, 2); assert.equal(f.calls.connect.length, 1);
+  assert.equal(provider.page, f.created[1]); await provider.close();
+  assert.equal(f.created[1].closes, 1); assert.equal(f.calls.contextClose, 0); assert.equal(f.calls.foreignClose, 0);
+});
+
+test('shutdown during Chrome connection waits cannot leave a new attachment running', async () => {
+  const f = attachedChromeFixture(); let release;
+  const connected = new Promise(resolve => { release = resolve; });
+  const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: async () => connected });
+  const opening = provider.open(URL);
+  await provider.close(); release(f.attached);
+  await assert.rejects(opening, error => error.code === 'chrome_debugging_unavailable');
+  assert.equal(f.calls.disconnect, 1); assert.equal(f.calls.newPage, 0); assert.equal(f.calls.contextClose, 0);
+});
+
+test('invalid Chrome target is rejected before connecting', async () => {
+  const f = attachedChromeFixture();
+  const provider = new ChatGPTBrowser({ browserMode: 'chrome', connectOverCDP: f.connectOverCDP });
+  await assert.rejects(provider.open('https://example.invalid'), error => error.code === 'invalid_url');
+  assert.equal(f.calls.connect.length, 0);
+});

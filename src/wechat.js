@@ -185,13 +185,13 @@ export class WeChatClient {
     };
   }
 
-  async pollQr(qrcode, verifyCode) {
+  async pollQr(qrcode, verifyCode, { signal } = {}) {
     const query = new URLSearchParams({ qrcode: requiredString(qrcode, 'wechat_invalid_qr', 4096) });
     if (verifyCode !== undefined) {
       if (typeof verifyCode !== 'string' || !/^[0-9]{4,10}$/.test(verifyCode)) throw new WeChatError('wechat_invalid_pin');
       query.set('verify_code', verifyCode);
     }
-    const data = await this.#request('/ilink/bot/get_qrcode_status?' + query, { timeout: 40000 });
+    const data = await this.#request('/ilink/bot/get_qrcode_status?' + query, { timeout: 40000, signal });
     if (data.status === 'scaned_but_redirect' || data.status === 'binded_redirect') {
       throw new WeChatError('wechat_login_redirect_unsupported');
     }

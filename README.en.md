@@ -21,6 +21,8 @@ This community project is not affiliated with OpenAI or Tencent. The WeChat adap
 
 ## Quick start
 
+Optional existing-Chrome mode: on Chrome 144+, enable instance remote debugging at `chrome://inspect/#remote-debugging`, then run `npm run setup -- --browser chrome` and approve Chrome's connection prompt. Debugging can access signed-in browser sessions; allow only trusted local software. The bridge creates and owns a new ChatGPT tab, closes only that tab on exit, and disconnects without closing your existing tabs. Disable remote debugging after testing. This lifecycle is mock-tested; live account acceptance is still pending.
+
 You need Node.js **22.13+**, an account that can use ChatGPT in a browser on this computer, and a WeChat account able to pair through iLink Bot. Windows is the first target; macOS and Linux have not been verified with real accounts.
 
 Download and extract this repository's source ZIP, or clone it, then open a terminal in the project directory:

@@ -13,7 +13,7 @@
     "start": "node src/cli.js start",
     "doctor": "node src/cli.js doctor",
     "unlock": "node src/cli.js unlock",
-    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js",
+    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js test/pairing.test.js",
     "test:browser": "node --test test/browser.test.js test/integration.test.js",
     "check:release": "node scripts/check-release.js"
   },

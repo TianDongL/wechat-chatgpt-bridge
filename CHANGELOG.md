@@ -4,6 +4,8 @@
 
 Initial source release candidate for an owner-only WeChat ↔ ChatGPT web bridge.
 
+Candidate follow-up: optional existing-Chrome attachment owns only its new tab and preserves existing browser windows; QR status network timeouts now retry read-only polling within the pairing deadline. Live account acceptance remains pending.
+
 - Standalone Tencent iLink QR pairing and long polling, without a public callback server.
 - A visible dedicated Playwright browser profile; users sign in themselves.
 - Strict standalone `/help`, `/where`, `/list`, `/switch`, `/new` and `/ack` commands.

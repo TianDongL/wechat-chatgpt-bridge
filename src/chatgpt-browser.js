@@ -122,12 +122,21 @@ function readRenderedPage() {
 }
 
 export class ChatGPTBrowser {
-  constructor({ profileDir, headless = false, timeoutMs = 180000 } = {}) {
-    if (typeof profileDir !== 'string' || !profileDir.trim()) throw bridgeError('profile_required');
+  constructor({ profileDir, headless = false, timeoutMs = 180000, browserMode = 'managed',
+    connectOverCDP = (endpoint, options) => chromium.connectOverCDP(endpoint, options) } = {}) {
+    if (!['managed', 'chrome'].includes(browserMode)) throw bridgeError('invalid_browser_mode');
+    if (browserMode === 'managed' && (typeof profileDir !== 'string' || !profileDir.trim())) throw bridgeError('profile_required');
+    if (typeof connectOverCDP !== 'function') throw bridgeError('invalid_browser_connector');
     if (!Number.isFinite(timeoutMs) || timeoutMs < 100) throw bridgeError('invalid_timeout');
-    this.profileDir = resolve(profileDir);
+    this.profileDir = typeof profileDir === 'string' && profileDir.trim() ? resolve(profileDir) : null;
     this.headless = headless;
     this.timeoutMs = timeoutMs;
+    this.browserMode = browserMode;
+    this._connectOverCDP = connectOverCDP;
+    this.attachedBrowser = null;
+    this._ownedPage = null;
+    this._opening = false;
+    this._generation = 0;
     this.context = null;
     this.page = null;
     this._pending = false;
@@ -135,17 +144,47 @@ export class ChatGPTBrowser {
 
   async open(url = 'https://chatgpt.com/') {
     url = checkedUrl(url);
-    if (this._pending) throw bridgeError('busy');
-    if (!this.context) {
-      await mkdir(this.profileDir, { recursive: true });
-      this.context = await chromium.launchPersistentContext(this.profileDir, { headless: this.headless });
+    if (this._pending || this._opening) throw bridgeError('busy');
+    this._opening = true;
+    const generation = this._generation;
+    try {
+      if (!this.context) {
+        if (this.browserMode === 'chrome') {
+          const attached = await this._connectOverCDP('chrome', { noDefaults: true, timeout: 30000 });
+          if (generation !== this._generation) {
+            await attached.close();
+            throw bridgeError('browser_closed');
+          }
+          this.attachedBrowser = attached;
+          this.context = attached.contexts()[0];
+          if (!this.context) throw bridgeError('chrome_debugging_unavailable');
+        } else {
+          await mkdir(this.profileDir, { recursive: true });
+          this.context = await chromium.launchPersistentContext(this.profileDir, { headless: this.headless });
+        }
+      }
+      if (!this.page || this.page.isClosed()) {
+        // Attached Chrome belongs to the user. Always create a bridge-owned tab;
+        // never navigate an existing personal tab or reuse it on reconnect.
+        this.page = this.browserMode === 'chrome' ? await this.context.newPage()
+          : this.context.pages()[0] || await this.context.newPage();
+        if (this.browserMode === 'chrome') this._ownedPage = this.page;
+      }
+      if (generation !== this._generation) throw bridgeError('browser_closed');
+      await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      // Initial login may redirect to an authentication page. Keep this visible
+      // browser open for the user; send/select retain the strict origin guard.
+      await this._waitForUi();
+      return await this.inspect();
+    } catch (error) {
+      if (this.browserMode === 'chrome') {
+        await this.close().catch(() => {});
+        throw bridgeError('chrome_debugging_unavailable');
+      }
+      throw error;
+    } finally {
+      this._opening = false;
     }
-    if (!this.page || this.page.isClosed()) this.page = this.context.pages()[0] || await this.context.newPage();
-    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Initial login may redirect to an authentication page. Keep this visible
-    // browser open for the user; send/select retain the strict origin guard.
-    await this._waitForUi();
-    return this.inspect();
   }
 
   async _waitForUi() {
@@ -296,8 +335,24 @@ export class ChatGPTBrowser {
   }
 
   async close() {
-    if (this.context) await this.context.close();
-    this.context = null;
-    this.page = null;
+    this._generation++;
+    if (this.browserMode === 'chrome') {
+      const attached = this.attachedBrowser, owned = this._ownedPage;
+      this.attachedBrowser = null;
+      this._ownedPage = null;
+      this.context = null;
+      this.page = null;
+      try {
+        if (owned && !owned.isClosed()) await owned.close();
+      } finally {
+        // CDP Browser.close disconnects our connection. Closing the shared
+        // default context instead would operate on a resource we do not own.
+        if (attached) await attached.close();
+      }
+    } else {
+      if (this.context) await this.context.close();
+      this.context = null;
+      this.page = null;
+    }
   }
 }
