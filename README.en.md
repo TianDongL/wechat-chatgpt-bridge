@@ -1,5 +1,7 @@
 # WeChat ChatGPT Bridge
 
+Maintained by [TianDongL](https://github.com/TianDongL). MIT licensed. See the [candidate validation record](docs/validation.md) for the exact tested scope.
+
 Continue your **ChatGPT web conversations from WeChat**. A visible browser on your computer opens ChatGPT; the bridge carries text between that page and your paired WeChat account.
 
 [中文](README.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)

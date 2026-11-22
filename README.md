@@ -2,7 +2,7 @@
 
 在微信里继续你的 **ChatGPT 网页会话**。电脑上的可见浏览器负责打开 ChatGPT，微信负责收发文字。
 
-[English](README.en.md) · [架构](docs/architecture.md) · [验收清单](docs/acceptance.md) · [安全说明](SECURITY.md)
+[English](README.en.md) · [架构](docs/architecture.md) · [验证记录](docs/validation.md) · [验收清单](docs/acceptance.md) · [安全说明](SECURITY.md)
 
 **当前版本：`0.1.0-alpha.1` 发布候选。** 第一版面向愿意反馈问题的早期使用者。自动化测试不能代替真实账号验收；当前尚未完成全新账号、干净电脑上的微信 ↔ ChatGPT 端到端验收，请先看[已验证范围与待验证项](docs/acceptance.md)。
 
@@ -143,3 +143,5 @@ npm run test:browser
 测试使用合成数据和本地模拟页面，不需要你的真实微信或 ChatGPT 登录。浏览器测试先安装 Chromium。通过测试后，仍需完成[真实账号验收清单](docs/acceptance.md)，才能声称对应平台或版本已可用。
 
 欢迎提交能复现的问题、网页结构变更修复和首次安装反馈。请先阅读 [贡献说明](CONTRIBUTING.md)。协议适配来源与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+维护者：[TianDongL](https://github.com/TianDongL)。项目采用 [MIT 许可证](LICENSE)。
