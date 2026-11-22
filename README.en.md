@@ -6,7 +6,7 @@ Continue your **ChatGPT web conversations from WeChat**. A visible browser on yo
 
 [中文](README.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
 
-**Status: `0.1.0-alpha.1` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
+**Status: `0.1.0-alpha.2` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
 
 ## Scope
 
@@ -28,8 +28,6 @@ git clone https://github.com/TianDongL/wechat-chatgpt-bridge.git
 cd wechat-chatgpt-bridge
 ```
 
-Optional existing-Chrome mode: on Chrome 144+, enable instance remote debugging at `chrome://inspect/#remote-debugging`, then run `npm run setup -- --browser chrome` and approve Chrome's connection prompt. Debugging can access signed-in browser sessions; allow only trusted local software. The bridge creates and owns a new ChatGPT tab, closes only that tab on exit, and disconnects without closing your existing tabs. Disable remote debugging after testing. This lifecycle is mock-tested; live account acceptance is still pending.
-
 You need Node.js **22.13+**, an account that can use ChatGPT in a browser on this computer, and a WeChat account able to pair through iLink Bot. Windows is the first target; macOS and Linux have not been verified with real accounts.
 
 Download and extract this repository's source ZIP, or clone it, then open a terminal in the project directory:
@@ -43,7 +41,7 @@ npm run setup
 Follow the terminal prompts:
 
 1. Sign in to ChatGPT in the dedicated browser opened by setup. Complete any login verification yourself.
-2. You may open an existing ordinary ChatGPT conversation or keep the new-chat page. Wait until it is loaded and idle with an empty composer, then press Enter in the terminal.
+2. Open an existing ordinary ChatGPT conversation. If your account has none, send a message manually on the webpage first and wait for a `https://chatgpt.com/c/…` URL. Once the page is loaded and idle with an empty composer, press Enter in the terminal. The bridge only connects to existing conversations.
 3. Scan the displayed QR code with WeChat and confirm pairing. Enter a verification code if prompted. Do not run two bridges against the same bot.
 4. Start the bridge:
 
@@ -57,6 +55,10 @@ The first connection is successful when all three are observed: WeChat receives 
 
 Press **Ctrl+C** in the bridge terminal to stop. Use `npm start` to run again. Historical incoming messages not received before startup are skipped; pending messages already saved by the bridge are recovered according to their state. V1 does not install a background service or configure startup at login. While bridging, do not manually send messages, navigate, or leave an unsent draft in the dedicated tab.
 
+## Upgrading from an earlier candidate
+
+Stop the old bridge, update the source, and run `npm ci` while preserving your data directory. If you used existing-Chrome attachment, run `npm run browser:install` and `npm run setup`, then sign in to the dedicated browser and select an existing conversation. You can reuse the WeChat pairing. Manual remote-debugging setup is no longer needed. A saved homepage selection requires setup again; old uncertain records are retained without replay.
+
 ## Commands
 
 Commands must occupy a single message on one line. `/` and `\` prefixes are accepted. Commands embedded in prose or multi-line text remain ordinary chat text.
@@ -67,16 +69,14 @@ Use `/cd` to switch conversations; `/switch` remains a compatible alias. List, c
 | --- | --- |
 | `/help` | Show help |
 | `/where` | Show the current ChatGPT web conversation |
-| `/list` | Number conversations currently visible in the page sidebar |
+| `/list` | Number up to 12 conversations currently visible in the page sidebar |
 | `/cd 1` | Select an entry from the latest list |
 | `/cd https://chatgpt.com/c/<uuid>` | Select an ordinary ChatGPT conversation URL |
 | `/cd <uuid>` | Select a conversation by its web ID |
-| `/new` | Start a new web conversation |
-| `/ack` | Clear a local uncertain-delivery pause after you check the page; never resend the original message |
 
 Sidebar results are not your full history. List numbers are temporary; run `/list` again after restarting. Conversation IDs here belong to ChatGPT web URLs, not the API.
 
-After an uncertain webpage submission or response, inspect both ChatGPT and WeChat before using `/ack` to clear the local pause. If delivery back to WeChat fails or is uncertain, the complete reply is saved in the data directory's `replies` folder; `/ack` does not resend it. A timeout may happen after the remote service accepted a message. The bridge does not promise exactly-once delivery across network failures.
+After an uncertain webpage submission or response, inspect both ChatGPT and WeChat. The original delivery record is retained and never automatically retried; no extra command is needed to unlock later messages. Each new message still requires the selected conversation, a signed-in idle page, and an empty composer. If delivery back to WeChat fails or is uncertain, the complete reply is saved in the data directory's `replies` folder and is not automatically sent again. A timeout may happen after the remote service accepted a message. The bridge does not promise exactly-once delivery across network failures.
 
 ## Troubleshooting
 
@@ -90,7 +90,7 @@ Stop the running bridge with Ctrl+C before running `npm run doctor`. It inspects
 | A conversation is missing from `/list` | Use `/cd` with its ordinary ChatGPT URL |
 | QR code expires | Run `npm run setup` again and use a new code |
 | WeChat rejects a reply | Send the bot a fresh WeChat message to refresh reply context; report the sanitized error if it persists |
-| Submission or reply is uncertain | Inspect the webpage; do not blindly resend. Use `/ack` after resolving the uncertainty |
+| Submission or reply is uncertain | Inspect the webpage and avoid repeating the original message. Send fresh messages once the page is idle and its composer is empty |
 | Another instance owns the data directory | Stop that instance first. If its process has exited but the lock remains, run `npm run unlock`; it only clears locks whose recorded process no longer exists |
 
 There is no captcha bypass or workaround for platform access restrictions. If your normal browser cannot reach ChatGPT, resolve that first.

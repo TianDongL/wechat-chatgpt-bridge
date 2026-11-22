@@ -19,13 +19,11 @@ if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
 }
 const command = args.shift() || 'help';
 let dataDir = defaultDataDir();
-let requestedBrowser;
 while (args.length) {
   const flag = args.shift(), value = args.shift();
   if (flag === '--data-dir' && value) dataDir = path.resolve(value);
-  else if (flag === '--browser' && ['managed', 'chrome'].includes(value)) requestedBrowser = value;
   else {
-    console.error('用法：node src/cli.js setup|start|doctor|unlock [--data-dir 独立数据目录] [--browser managed|chrome]'); process.exit(2);
+    console.error('用法：node src/cli.js setup|start|doctor|unlock [--data-dir 独立数据目录]'); process.exit(2);
   }
 }
 const log = text => console.log(text);
@@ -36,7 +34,7 @@ const hints = {
   credentials_missing: '尚未扫码配对。请先运行 npm run setup。',
   browser_missing: '缺少浏览器。请运行 npm run browser:install。',
   browser_not_ready: '浏览器尚未就绪。完成 ChatGPT 登录、进入普通会话、清空草稿并等待回复结束后再试。',
-  chrome_debugging_unavailable: '暂不能连接现有 Chrome。请按 README 开启 Chrome 的本机远程调试，并在连接提示中允许本次桥接。',
+  conversation_required: '请运行 npm run setup，登录后打开一个已有的普通 ChatGPT 会话，再回到终端按回车。',
   owner_changed: '当前微信配对与账本不匹配。请使用新的独立 --data-dir 为新账号配对。',
   login_expired: '微信二维码已过期。请重新运行 npm run setup。',
   wechat_login_redirect_unsupported: '当前账号登录需要重定向，本 alpha 版尚不支持。请不要手动复制令牌。',
@@ -65,26 +63,21 @@ async function ask(question, signal = abort.signal) {
   return prompt.question(question, {signal});
 }
 async function openBrowser(url) {
-  const settings = store.read('settings.json', {browser: 'managed'});
-  const browserMode = requestedBrowser ?? settings.browser;
-  if (!['managed', 'chrome'].includes(browserMode)) throw new Error('state_file_invalid');
-  if (browserMode === 'managed' && !browserInstalled()) throw new Error('browser_missing');
-  provider = new ChatGPTBrowser({profileDir: path.join(dataDir, 'browser-profile'), browserMode});
-  await provider.open(url);
-  return browserMode;
+  if (!browserInstalled()) throw new Error('browser_missing');
+  provider = new ChatGPTBrowser({profileDir: path.join(dataDir, 'browser-profile')});
+  await provider.open(url || 'https://chatgpt.com/');
 }
 async function setup() {
-  log('WeChat ChatGPT Bridge · 首次设置\n不需要 API Key。独立模式在本机保存专用登录资料；Chrome 模式使用你现有的登录。');
+  log('WeChat ChatGPT Bridge · 首次设置\n不需要 API Key。在本机专用浏览器登录即可，无需开启浏览器调试。');
   const saved = store.read('credentials.json', null);
   const state = store.read('state.json', initialState());
-  const browserMode = await openBrowser(state.selected);
-  log(browserMode === 'chrome' ? '1/2 已在现有 Chrome 中打开独立测试标签。请确认这里是你要使用的 ChatGPT 账号。' : '1/2 请在打开的专用浏览器里登录 ChatGPT。可打开已有普通会话，或停留在新对话页。');
+  await openBrowser(state.selected);
+  log('1/2 请在打开的专用浏览器里登录 ChatGPT，并打开一个已有的普通会话。若账号还没有会话，请先在网页手动聊一句。');
   await ask('完成登录、清空输入框并等页面加载完成后，在这里按回车：');
   const status = await provider.inspect();
   if (!status.ready || status.busy) throw new Error('browser_not_ready');
-  state.selected = conversationUrl(status.url, {allowHome: true});
+  try { state.selected = conversationUrl(status.url); } catch { throw new Error('conversation_required'); }
   store.write('state.json', state);
-  store.write('settings.json', {browser: browserMode});
   const reuse = saved && (await ask('已有微信配对，按回车继续使用；若已失效，输入 relogin 重新扫码：')).trim() !== 'relogin';
   if (reuse) {
     log('2/2 继续使用现有微信配对。');
@@ -111,6 +104,7 @@ async function start() {
   const client = new WeChatClient({credentials});
   const since = Date.now();
   const bridge = new Bridge({store, wechat: client, provider: null, credentials, log, since, signal: abort.signal});
+  if (!bridge.state.selected) throw new Error('conversation_required');
   await openBrowser(bridge.state.selected); bridge.provider = provider;
   const status = await provider.inspect();
   if (!status.ready || status.busy) throw new Error('browser_not_ready');
@@ -141,16 +135,18 @@ async function doctor() {
   const credentials = store.read('credentials.json', null);
   log(`微信本地配对：${credentials ? '存在（不输出令牌）' : '未配置 → npm run setup'}`);
   const state = store.read('state.json', initialState());
-  log(`上次提交待确认：${state.blocked ? '是 → 查看网页后在微信发 /ack' : '否'}`);
+  log(`历史网页结果未确认：${Object.values(state.records || {}).filter(x => ['submitting', 'accepted', 'uncertain'].includes(x.status)).length} 条（请查看网页，旧消息不会重发）`);
   log(`未确认微信投递：${Object.values(state.records || {}).filter(x => ['replying', 'delivery_uncertain'].includes(x.status)).length} 条`);
   if (credentials) new WeChatClient({credentials});
-  const mode = requestedBrowser ?? store.read('settings.json', {browser: 'managed'}).browser;
-  if (browserInstalled() || mode === 'chrome') {
+  if (browserInstalled()) {
     await openBrowser(state.selected);
     const status = await provider.inspect();
     log(`ChatGPT 页面：${status.ready && !status.busy ? '就绪' : '需要登录、等待加载或结束生成'}`);
     if (!status.ready || status.busy) process.exitCode = 1;
   } else process.exitCode = 1;
+  try { conversationUrl(state.selected); } catch {
+    log('尚未绑定已有网页会话 → npm run setup'); process.exitCode = 1;
+  }
   if (!credentials) process.exitCode = 1;
   log('doctor 不发送消息；本地配对文件存在不代表服务端登录仍有效。');
 }
@@ -172,7 +168,7 @@ try {
     store = new StateStore(dataDir); store.acquire();
     await ({setup, start, doctor}[command])();
   } else {
-    log('WeChat ChatGPT Bridge · 0.1.0-alpha.1\nnpm run setup   首次登录与扫码\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录 --browser chrome');
+    log('WeChat ChatGPT Bridge · 0.1.0-alpha.2\nnpm run setup   首次登录与扫码\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录');
     if (command !== 'help') process.exitCode = 2;
   }
 } catch (error) {

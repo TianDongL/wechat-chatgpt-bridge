@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-alpha.2 — 2026-11-22
+
+Narrow the public bridge to continuing existing ChatGPT web conversations.
+
+- Remove `/new` and `/ack` from command handling, help, and quick-start instructions. Keep `/help`, `/where`, `/list`, `/cd`, and the `/switch` alias; list up to 12 visible conversations.
+- Remove existing-Chrome attachment and its `--browser` option. Use only the dedicated visible browser, without asking users to enable remote debugging.
+- Require an existing conversation during setup; never submit from the new-chat page.
+- Keep uncertain submissions as terminal per-message records. Fresh messages still check page readiness, while old messages are never replayed. Migrate earlier pause state without deleting delivery records.
+- Update upgrade instructions and regression coverage. Real-account end-to-end acceptance remains pending.
+
 ## 0.1.0-alpha.1 — 2026-11-22
 
 Initial source release candidate for an owner-only WeChat ↔ ChatGPT web bridge.

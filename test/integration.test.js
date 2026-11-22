@@ -7,7 +7,7 @@ import {chromium} from 'playwright';
 import {StateStore} from '../src/state.js';
 import {WeChatClient} from '../src/wechat.js';
 import {ChatGPTBrowser} from '../src/chatgpt-browser.js';
-import {Bridge} from '../src/bridge.js';
+import {Bridge, initialState} from '../src/bridge.js';
 
 test('complete synthetic journey: channel, durable store, browser, reply and restart', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wechat-journey-test-'));
@@ -17,7 +17,8 @@ test('complete synthetic journey: channel, durable store, browser, reply and res
   const html = fs.readFileSync(new URL('./fixtures/chatgpt.html', import.meta.url), 'utf8');
   await context.route('**/*', route => route.request().isNavigationRequest() && new URL(route.request().url()).origin === 'https://chatgpt.com'
     ? route.fulfill({contentType: 'text/html', body: html}) : route.abort());
-  const page = await context.newPage(); await page.goto('https://chatgpt.com/');
+  const selected = 'https://chatgpt.com/c/11111111-1111-4111-8111-111111111111';
+  const page = await context.newPage(); await page.goto(selected);
   const provider = new ChatGPTBrowser({profileDir: path.join(root, 'unused'), timeoutMs: 3000});
   provider.context = context; provider.page = page;
   const credentials = {token: 'SYNTHETIC-INTEGRATION', botId: 'test-bot', ownerId: 'test-owner'};
@@ -32,6 +33,7 @@ test('complete synthetic journey: channel, durable store, browser, reply and res
     item_list: [{type: 1, text_item: {text}}]});
   try {
     store.acquire();
+    store.write('state.json', {...initialState(), selected});
     let bridge = new Bridge({store, wechat: client, provider, credentials, since: Date.now() - 1000});
     messages = [incoming('1', '/help'), incoming('2', '/list'), incoming('3', '/cd 1'),
       incoming('4', '解释这段文字\n/cd 7\n不要误切换')];
