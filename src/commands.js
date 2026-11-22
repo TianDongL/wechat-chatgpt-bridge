@@ -1,9 +1,11 @@
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export function parseCommand(text) {
   if (typeof text !== 'string' || /[\r\n]/.test(text)) return null;
-  const match = /^[ \t]*[\\/](help|where|list|switch|new|ack)(?:[ \t]+([^\s]+))?[ \t]*$/.exec(text);
-  if (!match || (match[1] !== 'switch' && match[2])) return null;
-  return {name: match[1], argument: match[2]};
+  const match = /^[ \t]*[\\/](help|where|list|cd|switch|new|ack)(?:[ \t]+([^\s]+))?[ \t]*$/.exec(text);
+  if (!match) return null;
+  const name = match[1] === 'cd' ? 'switch' : match[1];
+  if (name !== 'switch' && match[2]) return null;
+  return {name, argument: match[2]};
 }
 export function conversationUrl(value, {allowHome = false} = {}) {
   if (typeof value !== 'string') throw new Error('invalid_conversation_url');
@@ -20,11 +22,12 @@ export const HELP = `微信 × ChatGPT 网页桥
 /help 查看命令
 /where 查看当前会话
 /list 列出网页侧栏可见会话
-/switch 1 切换到最近列表的第 1 项
-/switch 网页会话链接或 UUID
+/cd 1 切换到最近列表的第 1 项
+/cd 网页会话链接或 UUID
 /new 打开新对话
 /ack 核对网页后解除“提交待确认”，不会重发
 
+旧命令 /switch 仍可使用。
 命令须单独一行；正文里提到命令不会触发。普通文字送到当前 ChatGPT 会话。电脑、终端和桥的浏览器须保持运行。`;
 export function splitText(text, maxBytes = 3800) {
   if (typeof text !== 'string' || !Number.isSafeInteger(maxBytes) || maxBytes < 4) throw new Error('invalid_text');

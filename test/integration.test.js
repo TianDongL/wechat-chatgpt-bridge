@@ -33,10 +33,12 @@ test('complete synthetic journey: channel, durable store, browser, reply and res
   try {
     store.acquire();
     let bridge = new Bridge({store, wechat: client, provider, credentials, since: Date.now() - 1000});
-    messages = [incoming('1', '/help'), incoming('2', '/list'), incoming('3', '/switch 1'),
-      incoming('4', '解释这段文字\n/switch 7\n不要误切换')];
+    messages = [incoming('1', '/help'), incoming('2', '/list'), incoming('3', '/cd 1'),
+      incoming('4', '解释这段文字\n/cd 7\n不要误切换')];
     await bridge.ingest(await client.getUpdates(bridge.state.cursor)); await bridge.drain();
     assert.equal(outbound.length, 4);
+    assert.match(outbound[0].item_list[0].text_item.text, /^\/cd 1 /m);
+    assert.match(outbound[2].item_list[0].text_item.text, /\/help/);
     assert.ok(outbound.every(msg => msg.to_user_id === 'test-owner'));
     assert.equal(await page.evaluate(() => window.sendClicks), 1);
     assert.equal(await page.locator('[data-message-id="new-user-1"]').innerText(), messages[3].item_list[0].text_item.text);

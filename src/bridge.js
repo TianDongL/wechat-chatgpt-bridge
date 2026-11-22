@@ -68,7 +68,7 @@ export class Bridge {
   }
   async command(command) {
     if (command.name === 'help') return HELP;
-    if (command.name === 'where') return `当前 ChatGPT 网页：\n${this.state.selected}${this.state.blocked ? '\n有提交结果待确认。请先核对网页，再发 /ack；不会重发。' : ''}`;
+    if (command.name === 'where') return `当前 ChatGPT 网页：\n${this.state.selected}${this.state.blocked ? '\n有提交结果待确认。请先核对网页，再发 /ack；不会重发。' : ''}\n发送 /help 查看命令。`;
     if (command.name === 'ack') {
       if (!this.state.blocked) return '没有待确认的网页提交。';
       const previous = this.state.records[this.state.blocked];
@@ -80,19 +80,19 @@ export class Bridge {
       return '有提交结果待确认。请先查看当前网页，再发 /ack。';
     if (command.name === 'list') {
       this.listed = (await this.provider.list()).slice(0, 20);
-      return this.listed.length ? this.listed.map((x, i) => `${i + 1}. ${x.title}\n${x.url}`).join('\n\n') : '网页侧栏暂无可见会话。可以 /new，或 /switch 完整会话链接。';
+      return this.listed.length ? this.listed.map((x, i) => `${i + 1}. ${x.title}\n${x.url}`).join('\n\n') + '\n\n发送 /cd 编号切换；发送 /help 查看命令。' : '网页侧栏暂无可见会话。可以 /new，或 /cd 完整会话链接。发送 /help 查看命令。';
     }
     let target;
     if (command.name === 'new') target = 'https://chatgpt.com/';
     else if (command.name === 'switch') {
-      if (!command.argument) return '用法：/switch 1 或 /switch https://chatgpt.com/c/会话ID';
+      if (!command.argument) return HELP;
       const item = /^[1-9]\d*$/.test(command.argument) ? this.listed[Number(command.argument) - 1]?.url : command.argument;
-      try { target = conversationUrl(item); } catch { return '会话无效。先发 /list，再用序号切换；也可以使用完整 ChatGPT 会话链接。'; }
+      try { target = conversationUrl(item); } catch { return '会话无效。先发 /list，再用 /cd 编号切换；也可以使用完整 ChatGPT 会话链接。发送 /help 查看命令。'; }
     }
-    if (target === this.state.selected && command.name !== 'new') return `已在该会话：\n${target}`;
+    if (target === this.state.selected && command.name !== 'new') return `已在该会话：\n${target}\n发送 /help 查看命令。`;
     await this.provider.select(target);
     this.state.selected = target; this.save();
-    return target === 'https://chatgpt.com/' ? '已打开新对话。下一条文字将在这里发送。' : `已切换：\n${target}`;
+    return target === 'https://chatgpt.com/' ? '已打开新对话。下一条文字将在这里发送。发送 /help 查看命令。' : `已切换：\n${target}\n发送 /help 查看命令。`;
   }
   async process(key, record) {
     const command = parseCommand(record.text);

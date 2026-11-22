@@ -54,14 +54,16 @@ Press **Ctrl+C** in the bridge terminal to stop. Use `npm start` to run again. H
 
 Commands must occupy a single message on one line. `/` and `\` prefixes are accepted. Commands embedded in prose or multi-line text remain ordinary chat text.
 
+Use `/cd` to switch conversations; `/switch` remains a compatible alias. List, current-conversation and selection replies include a `/help` hint.
+
 | Command | Action |
 | --- | --- |
 | `/help` | Show help |
 | `/where` | Show the current ChatGPT web conversation |
 | `/list` | Number conversations currently visible in the page sidebar |
-| `/switch 1` | Select an entry from the latest list |
-| `/switch https://chatgpt.com/c/<uuid>` | Select an ordinary ChatGPT conversation URL |
-| `/switch <uuid>` | Select a conversation by its web ID |
+| `/cd 1` | Select an entry from the latest list |
+| `/cd https://chatgpt.com/c/<uuid>` | Select an ordinary ChatGPT conversation URL |
+| `/cd <uuid>` | Select a conversation by its web ID |
 | `/new` | Start a new web conversation |
 | `/ack` | Clear a local uncertain-delivery pause after you check the page; never resend the original message |
 
@@ -78,7 +80,7 @@ Stop the running bridge with Ctrl+C before running `npm run doctor`. It inspects
 | Chromium is missing | Run `npm run browser:install` |
 | Login, verification, or missing composer | Complete the normal flow in the dedicated browser, then restart |
 | An unsent draft is present | Handle the draft yourself; the bridge will not overwrite it |
-| A conversation is missing from `/list` | Use `/switch` with its ordinary ChatGPT URL |
+| A conversation is missing from `/list` | Use `/cd` with its ordinary ChatGPT URL |
 | QR code expires | Run `npm run setup` again and use a new code |
 | WeChat rejects a reply | Send the bot a fresh WeChat message to refresh reply context; report the sanitized error if it persists |
 | Submission or reply is uncertain | Inspect the webpage; do not blindly resend. Use `/ack` after resolving the uncertainty |

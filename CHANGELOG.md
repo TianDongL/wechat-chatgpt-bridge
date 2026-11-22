@@ -8,7 +8,7 @@ Candidate follow-up: optional existing-Chrome attachment owns only its new tab a
 
 - Standalone Tencent iLink QR pairing and long polling, without a public callback server.
 - A visible dedicated Playwright browser profile; users sign in themselves.
-- Strict standalone `/help`, `/where`, `/list`, `/switch`, `/new` and `/ack` commands.
+- Strict standalone `/help`, `/where`, `/list`, `/cd`, `/new` and `/ack` commands; `/switch` remains an alias. Selection and list replies include a `/help` hint.
 - Durable message reservations, atomic inbox/cursor storage, and no automatic resend after an uncertain submission.
 - Owner binding, exact large message IDs, UTF-8-safe reply splitting, and local full reply files.
 - Windows setup/start scripts, Chinese and English guides, diagnostics, contribution and security guidance, and CI definitions.

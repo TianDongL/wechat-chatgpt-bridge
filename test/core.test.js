@@ -26,6 +26,8 @@ function fixture(initial = initialState()) {
 test('only entire standalone commands are control input', () => {
   for (const text of ['正文 /switch 7', '/switch 7\n再说一句', '```\n/switch 7\n```', '"/switch 7"', '/help extra', '/switcher 1', '/HELP', '/new\n']) assert.equal(parseCommand(text), null, text);
   assert.deepEqual(parseCommand(' \\switch 7\t'), {name: 'switch', argument: '7'});
+  for (const text of ['/cd 7', ' \\cd 7\t', '/switch 7']) assert.deepEqual(parseCommand(text), {name: 'switch', argument: '7'});
+  for (const text of ['正文 /cd 7', '/cd 7\n继续', '```\n/cd 7\n```', '"/cd 7"', '/cd 7 extra', '/cdrom 7', 'cd 7', '/cd 7\n']) assert.equal(parseCommand(text), null, text);
   assert.deepEqual(parseCommand('/help'), {name: 'help', argument: undefined});
 });
 test('conversation target rejects external hosts, credentials and query tricks', () => {
@@ -66,7 +68,7 @@ test('uncertain submit is not retried, including after restart; /ack never resen
   const f = fixture(); f.provider.send = async () => {f.posts.push('attempt'); throw Object.assign(new Error('timeout'), {uncertain: true});};
   await f.bridge.ingest(batch(msg())); await f.bridge.drain();
   assert.ok(f.disk.value.blocked); const next = f.make();
-  await next.ingest(batch(msg('next', '2'), msg('/switch ' + URL, '3'))); await next.drain();
+  await next.ingest(batch(msg('next', '2'), msg('/cd ' + URL, '3'))); await next.drain();
   assert.equal(f.posts.length, 1); assert.equal(f.selected.length, 0);
   await next.ingest(batch(msg('/ack', '4'))); await next.drain();
   assert.equal(f.posts.length, 1); assert.equal(f.disk.value.blocked, null);
@@ -90,8 +92,17 @@ test('WeChat send uncertainty is never replayed; full reply remains locally avai
   await f.make().drain(); assert.equal(f.sends.length, 1); assert.equal(f.posts.length, 1);
 });
 test('commands stay local; numeric list and /new route predictably', async () => {
-  const f = fixture(); await f.bridge.ingest(batch(msg('/help', '1'), msg('/list', '2'), msg('/switch 1', '3'), msg('/switch 1', '4'), msg('/new', '5')));
+  const f = fixture(); await f.bridge.ingest(batch(msg('/help', '1'), msg('/list', '2'), msg('/cd 1', '3'), msg('/switch 1', '4'), msg('/new', '5')));
   await f.bridge.drain(); assert.equal(f.posts.length, 0); assert.deepEqual(f.selected, [URL, 'https://chatgpt.com/']);
+  assert.match(f.sends[0].text, /^\/cd 1 /m);
+  assert.match(f.sends[0].text, /^\/help /m);
+  assert.match(f.sends[1].text, /\/cd 编号.*\/help/);
+  assert.match(f.sends[2].text, /\/help/);
+});
+test('cd inside multiline prose remains one ordinary prompt', async () => {
+  const f = fixture(); const text = '解释以下命令\n/cd 7\n请继续正文';
+  await f.bridge.ingest(batch(msg(text))); await f.bridge.drain();
+  assert.deepEqual(f.posts, [text]); assert.deepEqual(f.selected, []);
 });
 test('selected target is passed to provider so manual navigation cannot silently reroute', async () => {
   const f = fixture(); f.provider.send = async (_, options) => {
