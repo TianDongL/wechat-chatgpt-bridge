@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Fixture conversation - ChatGPT</title><style>[data-message-author-role="user"] { white-space: pre-wrap; }</style></head>
+<body>
+<nav><a href="/c/11111111-1111-4111-8111-111111111111">Fixture conversation</a><a href="https://example.com/c/22222222-2222-4222-8222-222222222222">External</a><a href="/c/33333333-3333-4333-8333-333333333333" hidden>Hidden</a></nav>
+<main id="messages">
+<article data-testid="conversation-turn-0"><div data-message-author-role="user" data-message-id="old-user">Old question</div></article>
+<article data-testid="conversation-turn-1"><div data-message-author-role="assistant" data-message-id="old-assistant"><div class="markdown"><p>Old answer must never be returned.</p></div></div><button data-testid="copy-turn-action-button">Copy</button></article>
+</main>
+<div id="prompt-textarea" contenteditable="true" role="textbox"></div><button data-testid="send-button">Send</button>
+<script>
+window.fixtureMode = 'normal'; window.sendClicks = 0;
+const messages = document.querySelector('#messages');
+function append(role, id, content) {
+  const article = document.createElement('article'); article.dataset.testid = 'conversation-turn-' + messages.children.length;
+  const message = document.createElement('div'); message.dataset.messageAuthorRole = role; message.dataset.messageId = id;
+  if (role === 'user') message.textContent = content;
+  else { const markdown = document.createElement('div'); markdown.className = 'markdown'; markdown.innerHTML = content; message.append(markdown); }
+  article.append(message); messages.append(article); return {article, message};
+}
+function copy(article) { const button = document.createElement('button'); button.dataset.testid = 'copy-turn-action-button'; button.textContent = 'Copy'; article.append(button); }
+document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+  window.sendClicks++;
+  const mode = window.fixtureMode, composer = document.querySelector('#prompt-textarea'), text = composer.innerText;
+  composer.innerHTML = '';
+  if (mode === 'no-user') return;
+  append('user', 'new-user-' + window.sendClicks, text);
+  if (mode === 'duplicate') append('user', 'duplicate-user', text);
+  if (location.pathname === '/') history.pushState({}, '', '/c/11111111-1111-4111-8111-111111111111');
+  const stop = document.createElement('button'); stop.dataset.testid = 'stop-button'; stop.textContent = 'Stop'; document.body.append(stop);
+  stop.addEventListener('click', () => { stop.remove(); });
+  const answer = append('assistant', 'new-assistant-' + window.sendClicks, '<p>Partial answer must never be returned.</p>');
+  if (mode === 'partial') return;
+  if (mode === 'navigate') { setTimeout(() => history.pushState({}, '', '/c/22222222-2222-4222-8222-222222222222'), 50); return; }
+  setTimeout(() => {
+    if (mode === 'stopped') { answer.message.dataset.messageStatus = 'cancelled'; copy(answer.article); stop.remove(); return; }
+    answer.message.querySelector('.markdown').innerHTML = '<p>Final <strong>answer</strong>.</p><pre><code class="language-html">&lt;div&gt;Original component&lt;/div&gt;</code></pre><p>After code.</p>';
+    if (mode === 'code-whitespace') answer.message.querySelector('code').textContent = '<div>One</div>\n\n\n<div>Two</div>\n\n';
+    if (mode === 'reasoning') answer.message.dataset.messageContentType = 'reasoning';
+    copy(answer.article); stop.remove();
+  }, mode === 'slow' ? 450 : 80);
+});
+</script></body></html>

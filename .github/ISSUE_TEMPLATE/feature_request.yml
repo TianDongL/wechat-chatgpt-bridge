@@ -1,0 +1,23 @@
+name: 功能建议 / Feature request
+description: 描述要解决的实际问题和预期使用方式。
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题？ / What problem would this solve?
+      description: 描述具体操作场景，不需要提供真实聊天记录。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 期望的使用方式 / Expected workflow
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 如何判断做好了？ / How could we verify it?
+      description: 可以提供合成示例、支持平台或必须保留的行为。
