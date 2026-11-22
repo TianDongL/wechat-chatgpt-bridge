@@ -8,10 +8,12 @@ import {StateStore} from '../src/state.js';
 import {WeChatClient} from '../src/wechat.js';
 import {ChatGPTBrowser} from '../src/chatgpt-browser.js';
 import {Bridge, initialState} from '../src/bridge.js';
+import {HtmlPreview} from '../src/html-preview.js';
 
 test('complete synthetic journey: channel, durable store, browser, reply and restart', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wechat-journey-test-'));
   const store = new StateStore(path.join(root, 'data'));
+  const preview = new HtmlPreview(); await preview.start({localOnly: true});
   const browser = await chromium.launch({headless: true});
   const context = await browser.newContext({offline: true});
   const html = fs.readFileSync(new URL('./fixtures/chatgpt.html', import.meta.url), 'utf8');
@@ -34,7 +36,7 @@ test('complete synthetic journey: channel, durable store, browser, reply and res
   try {
     store.acquire();
     store.write('state.json', {...initialState(), selected});
-    let bridge = new Bridge({store, wechat: client, provider, credentials, since: Date.now() - 1000});
+    let bridge = new Bridge({store, wechat: client, provider, preview, credentials, since: Date.now() - 1000});
     messages = [incoming('1', '/help'), incoming('2', '/list'), incoming('3', '/cd 1'),
       incoming('4', '解释这段文字\n/cd 7\n不要误切换')];
     await bridge.ingest(await client.getUpdates(bridge.state.cursor)); await bridge.drain();
@@ -45,14 +47,20 @@ test('complete synthetic journey: channel, durable store, browser, reply and res
     assert.equal(await page.evaluate(() => window.sendClicks), 1);
     assert.equal(await page.locator('[data-message-id="new-user-1"]').innerText(), messages[3].item_list[0].text_item.text);
     assert.match(outbound.at(-1).item_list[0].text_item.text, /Final \*\*answer\*\*/);
+    const delivered = outbound.at(-1).item_list[0].text_item.text;
+    assert.doesNotMatch(delivered, /<div>Original component<\/div>/);
+    const previewUrl = /http:\/\/127\.0\.0\.1:\d+\/p\/[A-Za-z0-9_-]+/.exec(delivered)[0];
+    const original = await (await fetch(previewUrl + '/source.txt')).text();
+    assert.equal(original, 'Final **answer**.\n\n```html\n<div>Original component</div>\n```\n\nAfter code.');
+    assert.ok(fs.readdirSync(path.join(root, 'data', 'replies')).some(name => fs.readFileSync(path.join(root, 'data', 'replies', name), 'utf8') === original));
     assert.equal(bridge.state.selected, 'https://chatgpt.com/c/11111111-1111-4111-8111-111111111111');
     store.release(); store.acquire();
-    bridge = new Bridge({store, wechat: client, provider, credentials, since: Date.now() - 1000});
+    bridge = new Bridge({store, wechat: client, provider, preview, credentials, since: Date.now() - 1000});
     await bridge.ingest(await client.getUpdates(bridge.state.cursor)); await bridge.drain();
     assert.equal(outbound.length, 4); assert.equal(await page.evaluate(() => window.sendClicks), 1);
     messages = [incoming('5', '第二句')];
     await bridge.ingest(await client.getUpdates(bridge.state.cursor)); await bridge.drain();
     assert.equal(outbound.length, 5); assert.equal(await page.evaluate(() => window.sendClicks), 2);
     assert.equal(Object.keys(store.read('state.json').records).length, 5);
-  } finally { await provider.close(); await browser.close(); store.release(); fs.rmSync(root, {recursive: true, force: true}); }
+  } finally { await preview.stop(); await provider.close(); await browser.close(); store.release(); fs.rmSync(root, {recursive: true, force: true}); }
 });

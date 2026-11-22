@@ -1,24 +1,35 @@
 {
   "name": "wechat-chatgpt-bridge",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "description": "A local, owner-only WeChat bridge to ChatGPT web conversations.",
   "type": "module",
   "license": "MIT",
   "author": "TianDongL",
-  "repository": {"type": "git", "url": "git+https://github.com/TianDongL/wechat-chatgpt-bridge.git"},
-  "bugs": {"url": "https://github.com/TianDongL/wechat-chatgpt-bridge/issues"},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TianDongL/wechat-chatgpt-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TianDongL/wechat-chatgpt-bridge/issues"
+  },
   "homepage": "https://github.com/TianDongL/wechat-chatgpt-bridge#readme",
-  "engines": {"node": ">=22.13.0"},
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "browser:install": "node scripts/install-browser.js",
     "setup": "node src/cli.js setup",
     "start": "node src/cli.js start",
     "doctor": "node src/cli.js doctor",
     "unlock": "node src/cli.js unlock",
-    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js test/pairing.test.js",
-    "test:browser": "node --test test/browser.test.js test/integration.test.js",
+    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js test/pairing.test.js test/html-preview.test.js",
+    "test:browser": "node --test test/browser.test.js test/preview-browser.test.js test/integration.test.js",
     "check:release": "node scripts/check-release.js"
   },
-  "dependencies": {"playwright": "1.65.1", "qrcode-terminal": "0.12.0"}
+  "dependencies": {
+    "htmlparser2": "12.0.0",
+    "playwright": "1.65.1",
+    "qrcode-terminal": "0.12.0"
+  }
 }

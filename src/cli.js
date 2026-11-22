@@ -11,6 +11,8 @@ import {waitForPairing} from './pairing.js';
 import {ChatGPTBrowser} from './chatgpt-browser.js';
 import {Bridge, initialState, digest} from './bridge.js';
 import {conversationUrl} from './commands.js';
+import {HtmlPreview} from './html-preview.js';
+import {installedTunnel, installTunnel} from './preview-tunnel.js';
 
 const args = process.argv.slice(2);
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -42,20 +44,23 @@ const hints = {
   wechat_session_expired: '微信登录已过期。重新运行 npm run setup，在已有配对提示中输入 relogin 后扫码。',
   wechat_invalid_pin: '校验码格式不正确。请重新运行 setup，按手机显示的数字输入。',
 };
-let store, provider, prompt;
+let store, provider, preview, prompt;
 const abort = new AbortController();
 let shuttingDown = false;
 async function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true; abort.abort();
   prompt?.close();
-  try { await provider?.close(); } finally { store?.release(); }
+  try { await preview?.stop(); } finally {
+    try { await provider?.close(); } finally { store?.release(); }
+  }
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
   log('\n正在停止微信桥并关闭本次浏览器页面……');
   abort.abort(); prompt?.close();
   // Keep the lock until the in-flight task has recorded its uncertain outcome.
   provider?.close().catch(() => {});
+  preview?.stop().catch(() => {});
 });
 function browserInstalled() { return fs.existsSync(chromium.executablePath()); }
 async function ask(question, signal = abort.signal) {
@@ -71,6 +76,10 @@ async function setup() {
   log('WeChat ChatGPT Bridge · 首次设置\n不需要 API Key。在本机专用浏览器登录即可，无需开启浏览器调试。');
   const saved = store.read('credentials.json', null);
   const state = store.read('state.json', initialState());
+  log('HTML 组件将通过本机临时网页链接查看；普通文字原样转发。链接持有者可查看该条原文，请勿随意转发。');
+  try { await installTunnel(dataDir, {signal: abort.signal, log}); }
+  catch { if (!abort.signal.aborted) log('HTML 预览程序准备失败，普通聊天仍可设置。网络恢复后重新运行 setup 重试。'); }
+  if (abort.signal.aborted) return;
   await openBrowser(state.selected);
   log('1/2 请在打开的专用浏览器里登录 ChatGPT，并打开一个已有的普通会话。若账号还没有会话，请先在网页手动聊一句。');
   await ask('完成登录、清空输入框并等页面加载完成后，在这里按回车：');
@@ -108,7 +117,14 @@ async function start() {
   await openBrowser(bridge.state.selected); bridge.provider = provider;
   const status = await provider.inspect();
   if (!status.ready || status.busy) throw new Error('browser_not_ready');
-  log('微信桥运行中。请保持这个终端和桥的浏览器标签打开；Ctrl+C 停止。\n微信发送 /help 查看命令。启动前的消息不会补发；无需公网隧道。');
+  preview = new HtmlPreview(); bridge.preview = preview;
+  try {
+    const tunnel = await installedTunnel(dataDir);
+    await preview.start(tunnel);
+  } catch { /* Preview failure cannot stop ordinary replies. */ }
+  if (abort.signal.aborted) return;
+  log(preview.ready ? 'HTML 预览已就绪：组件转为临时网页链接，普通文字原样发送。' : 'HTML 预览暂不可用，HTML 原文仍会发送。可检查网络后重启；若尚未安装，重新运行 setup。');
+  log('微信桥运行中。请保持这个终端和桥的浏览器标签打开；Ctrl+C 同时停止桥和预览链接。\n微信发送 /help 查看命令。启动前的消息不会补发；文字聊天无需公网隧道，HTML 预览使用临时隧道。');
   let failures = 0;
   while (!abort.signal.aborted) {
     await bridge.drain();
@@ -132,6 +148,8 @@ async function start() {
 async function doctor() {
   log(`Node ${process.version} · ${process.platform}/${process.arch}`);
   log(`浏览器安装：${browserInstalled() ? '正常' : '缺失 → npm run browser:install'}`);
+  try { await installedTunnel(dataDir); log('HTML 预览程序：校验通过（不启动隧道）'); }
+  catch { log('HTML 预览程序：未安装或校验失败 → npm run setup；普通文字聊天不依赖它'); }
   const credentials = store.read('credentials.json', null);
   log(`微信本地配对：${credentials ? '存在（不输出令牌）' : '未配置 → npm run setup'}`);
   const state = store.read('state.json', initialState());
@@ -168,7 +186,7 @@ try {
     store = new StateStore(dataDir); store.acquire();
     await ({setup, start, doctor}[command])();
   } else {
-    log('WeChat ChatGPT Bridge · 0.1.0-alpha.2\nnpm run setup   首次登录与扫码\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录');
+    log('WeChat ChatGPT Bridge · 0.1.0-alpha.3\nnpm run setup   首次登录、准备 HTML 预览与扫码\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录');
     if (command !== 'help') process.exitCode = 2;
   }
 } catch (error) {

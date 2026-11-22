@@ -22,5 +22,6 @@ replies/
 *.tgz
 test-results/
 playwright-report/
+output/playwright/
 .DS_Store
 Thumbs.db

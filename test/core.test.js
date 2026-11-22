@@ -151,3 +151,12 @@ test('persistence failure during ingest propagates before any side effect', asyn
   const f = fixture(); f.store.write = () => {throw new Error('disk full');};
   await assert.rejects(f.bridge.ingest(batch(msg())), /disk full/); assert.equal(f.posts.length, 0); assert.equal(f.sends.length, 0);
 });
+
+test('preview failures preserve the original reply and never retry the ChatGPT submission', async () => {
+  const f = fixture(); const original = '**说明**\r\n<div>原始组件</div>\n末尾  ';
+  f.provider.send = async () => {f.posts.push('once'); return {text: original, url: URL};};
+  f.bridge.preview = {transform: () => {throw new Error('preview unavailable');}};
+  await f.bridge.ingest(batch(msg())); await f.bridge.drain();
+  assert.equal(f.sends[0].text, original); assert.equal([...f.disk.replies.values()][0], original);
+  assert.deepEqual(f.posts, ['once']);
+});

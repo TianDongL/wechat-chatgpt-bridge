@@ -25,7 +25,8 @@ export const HELP = `微信 × ChatGPT 网页桥
 /cd 网页会话链接或 UUID
 
 旧命令 /switch 仍可使用。
-命令须单独一行；正文里提到命令不会触发。普通文字送到当前 ChatGPT 会话。电脑、终端和桥的浏览器须保持运行。`;
+命令须单独一行；正文里提到命令不会触发。普通文字送到当前 ChatGPT 会话。电脑、终端和桥的浏览器须保持运行。
+回复中的 HTML 组件会转为临时网页链接，周围文字原样保留；预览页可查看完整原文。预览不可用时发送原文。`;
 export function splitText(text, maxBytes = 3800) {
   if (typeof text !== 'string' || !Number.isSafeInteger(maxBytes) || maxBytes < 4) throw new Error('invalid_text');
   const chunks = []; let part = '', bytes = 0;

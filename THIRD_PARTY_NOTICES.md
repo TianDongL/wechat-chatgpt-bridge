@@ -34,3 +34,11 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Other installed dependencies retain their respective licenses inside their packages. No login credentials, personal message records, proprietary desktop executables or private tunnel binaries are included in this repository.
+
+## htmlparser2
+
+HTML component boundaries are parsed with [htmlparser2](https://github.com/fb55/htmlparser2), licensed under MIT. Its license and those of its dependencies are included in the installed npm packages.
+
+## cloudflared
+
+Setup downloads an official, version-pinned [cloudflared release](https://github.com/cloudflare/cloudflared/releases/tag/2026.11.1) and checks its SHA-256 digest. cloudflared is licensed under [Apache-2.0](https://github.com/cloudflare/cloudflared/blob/2026.11.1/LICENSE); its additional notices are available in the upstream repository. The executable is not included in this source repository or its archives. This project does not require a Cloudflare account or distribute tunnel credentials.

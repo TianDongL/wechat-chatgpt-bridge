@@ -6,16 +6,17 @@ Continue your **ChatGPT web conversations from WeChat**. A visible browser on yo
 
 [中文](README.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
 
-**Status: `0.1.0-alpha.2` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
+**Status: `0.1.0-alpha.3` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
 
 ## Scope
 
 - Text messages from the owner who paired the WeChat bot, with completed text replies sent back to that owner.
 - ChatGPT web conversations, including switching by a normal conversation URL.
-- A dedicated, visible Chromium profile. Sign in yourself; no cookie copying, OpenAI API key, Codex installation, or public tunnel is required.
+- A dedicated, visible Chromium profile. Sign in yourself; no cookie copying, OpenAI API key, or Codex installation is required.
+- Ordinary reply text is unchanged. Complete HTML components become webpage links while surrounding text and the complete original reply are preserved.
 - Strict standalone commands and persistent delivery state. Uncertain sends are not automatically retried.
 
-V1 does not support groups, other contacts, images, audio, files, scheduled proactive messages, or HTML component previews. Rich components may produce only their extractable page text. Keep your computer, terminal, and bridge browser running.
+V1 does not support groups, other contacts, image/audio messages, files, or scheduled proactive messages. HTML previews require extractable source; components that depend on ChatGPT's own environment may not fully render. Keep your computer, terminal, and bridge browser running.
 
 This community project is not affiliated with OpenAI or Tencent. The WeChat adapter follows Tencent's [iLink Bot protocol](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md). The ChatGPT adapter automates the visible webpage with Playwright; it is **not an official ChatGPT API**. Page changes, login challenges, and account restrictions can break compatibility.
 
@@ -40,6 +41,8 @@ npm run setup
 
 Follow the terminal prompts:
 
+Setup automatically downloads a pinned official cloudflared release and verifies its SHA-256 for temporary HTML pages. No Cloudflare account, domain, server, or browser debugging setting is required. If the download fails, text chat can still be configured; rerun setup after restoring connectivity. Preview downloads support Windows x64, Linux x64/arm64, and macOS x64/arm64.
+
 1. Sign in to ChatGPT in the dedicated browser opened by setup. Complete any login verification yourself.
 2. Open an existing ordinary ChatGPT conversation. If your account has none, send a message manually on the webpage first and wait for a `https://chatgpt.com/c/…` URL. Once the page is loaded and idle with an empty composer, press Enter in the terminal. The bridge only connects to existing conversations.
 3. Scan the displayed QR code with WeChat and confirm pairing. Enter a verification code if prompted. Do not run two bridges against the same bot.
@@ -58,6 +61,8 @@ Press **Ctrl+C** in the bridge terminal to stop. Use `npm start` to run again. H
 ## Upgrading from an earlier candidate
 
 Stop the old bridge, update the source, and run `npm ci` while preserving your data directory. If you used existing-Chrome attachment, run `npm run browser:install` and `npm run setup`, then sign in to the dedicated browser and select an existing conversation. You can reuse the WeChat pairing. Manual remote-debugging setup is no longer needed. A saved homepage selection requires setup again; old uncertain records are retained without replay.
+
+When upgrading from `alpha.2`, run setup once to prepare the preview program; the existing browser login and WeChat pairing can be reused.
 
 ## Commands
 
@@ -78,6 +83,14 @@ Sidebar results are not your full history. List numbers are temporary; run `/lis
 
 After an uncertain webpage submission or response, inspect both ChatGPT and WeChat. The original delivery record is retained and never automatically retried; no extra command is needed to unlock later messages. Each new message still requires the selected conversation, a signed-in idle page, and an empty composer. If delivery back to WeChat fails or is uncertain, the complete reply is saved in the data directory's `replies` folder and is not automatically sent again. A timeout may happen after the remote service accepted a message. The bridge does not promise exactly-once delivery across network failures.
 
+## HTML previews
+
+Plain text, blank lines, Markdown, inline code, and non-HTML code blocks remain unchanged. Only complete HTML component ranges are replaced by links. The preview page contains the surrounding text, interactive frames, the complete original reply, and a source download. The untouched reply is also kept in the local `replies` folder.
+
+Pages live in local memory and are reachable through a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). **Anyone holding a page link can read that complete reply; its contents pass through Cloudflare.** Text chat needs no tunnel. Links expire when the computer goes offline, the bridge stops/restarts, or capacity eviction occurs (128 pages, 32 MiB total). Quick Tunnels offer no uptime guarantee and are not permanent hosting.
+
+Original CSS and JavaScript run in sandboxed frames. Parent-page access, API requests, form submissions, and nested frames are restricted. ChatGPT-specific components may require the original conversation. Unavailable previews, incomplete components, or conversion errors fall back to the original text without requesting another GPT answer.
+
 ## Troubleshooting
 
 Stop the running bridge with Ctrl+C before running `npm run doctor`. It inspects the installation, local pairing files, and pending state, then opens the dedicated browser to inspect the page. It sends no messages and does not establish that the WeChat credentials are still valid on the server. It does not replace a real round-trip test.
@@ -92,6 +105,8 @@ Stop the running bridge with Ctrl+C before running `npm run doctor`. It inspects
 | WeChat rejects a reply | Send the bot a fresh WeChat message to refresh reply context; report the sanitized error if it persists |
 | Submission or reply is uncertain | Inspect the webpage and avoid repeating the original message. Send fresh messages once the page is idle and its composer is empty |
 | Another instance owns the data directory | Stop that instance first. If its process has exited but the lock remains, run `npm run unlock`; it only clears locks whose recorded process no longer exists |
+| HTML arrives as source | Check the terminal preview status. Run setup if the program is missing; an unavailable tunnel or incomplete component falls back to the original |
+| An old preview link is unavailable | Keep the computer and bridge running. Restart/eviction invalidates old pages; retrieve the original from ChatGPT or the local `replies` folder |
 
 There is no captcha bypass or workaround for platform access restrictions. If your normal browser cannot reach ChatGPT, resolve that first.
 

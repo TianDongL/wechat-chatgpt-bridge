@@ -1,14 +1,15 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {parseCommand, conversationUrl, HELP, splitText} from './commands.js';
 import {extractOwnerText} from './wechat.js';
+import {splitPreviewText} from './html-preview.js';
 
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export function initialState() {
   return {version: 1, cursor: '', selected: null, records: {}};
 }
 export class Bridge {
-  constructor({store, wechat, provider, credentials, log = () => {}, since = Date.now(), signal}) {
-    Object.assign(this, {store, wechat, provider, credentials, log, since, signal});
+  constructor({store, wechat, provider, credentials, preview, log = () => {}, since = Date.now(), signal}) {
+    Object.assign(this, {store, wechat, provider, credentials, preview, log, since, signal});
     this.state = store.read('state.json', initialState()); this.listed = [];
     if (this.state.version !== 1 || typeof this.state.cursor !== 'string' || !this.state.records ||
         typeof this.state.records !== 'object' || Array.isArray(this.state.records)) throw new Error('state_file_invalid');
@@ -51,11 +52,17 @@ export class Bridge {
       if (record.status === 'queued') await this.process(key, record);
     }
   }
-  async reply(key, record, text) {
+  async reply(key, record, text, {renderHtml = false, sourceUrl} = {}) {
+    // Save the provider's original reply, not a replacement containing temporary URLs.
     this.store.saveReply(key, text);
     if (this.signal?.aborted) { record.status = 'delivery_uncertain'; this.save(); return; }
+    let outgoing = text;
+    if (renderHtml && this.preview) {
+      try { outgoing = this.preview.transform(key, text, {sourceUrl, protectedValues: [this.credentials.token, record.contextToken]}); }
+      catch { this.log('HTML 预览暂不可用，已保留原文发送。'); }
+    }
     record.parts = []; record.status = 'replying'; this.save();
-    for (const part of splitText(text)) {
+    for (const part of outgoing === text ? splitText(text) : splitPreviewText(outgoing)) {
       if (this.signal?.aborted) { record.status = 'delivery_uncertain'; break; }
       const attempt = {clientId: `wcg-${randomUUID()}`, status: 'reserved'};
       record.parts.push(attempt); this.save();
@@ -124,6 +131,6 @@ export class Bridge {
       }
       return;
     }
-    await this.reply(key, record, result.text);
+    await this.reply(key, record, result.text, {renderHtml: true, sourceUrl: result.url});
   }
 }

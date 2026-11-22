@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha.3 — 2026-11-22
+
+Preserve ordinary reply text and turn complete HTML components into temporary webpage links.
+
+- Replace only component ranges; retain surrounding text, exact original replies, and source downloads. Keep inline code, non-HTML fences, citations, and incomplete components unchanged.
+- Serve interactive components in sandboxed frames from a bounded in-memory loopback server. Link splitting preserves complete preview URLs. Unavailable previews fall back to original replies through the existing delivery ledger.
+- Prepare a pinned, checksum-verified official cloudflared binary during setup, with an isolated configuration and shutdown tied to the bridge. No account, domain, personal binary, or browser debugging setup is required.
+- Add parsing, HTTP, lifecycle, mobile rendering, sandbox, installation failure, and bridge integration checks. Synthetic content also passed a real temporary public-tunnel check; fresh real-account WeChat round-trip acceptance remains pending.
+
 ## 0.1.0-alpha.2 — 2026-11-22
 
 Narrow the public bridge to continuing existing ChatGPT web conversations.
