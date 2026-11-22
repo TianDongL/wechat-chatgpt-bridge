@@ -10,6 +10,8 @@ browser-profile/
 credentials.json
 state.json
 settings.json
+control.json
+state-key.dpapi
 running.lock
 .bridge-data
 private-data/

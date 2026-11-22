@@ -20,7 +20,7 @@ function fixture(initial = {...initialState(), selected: URL}) {
     send: async (text, options) => {posts.push(text); await options.onSubmitted({url: URL, messageId: 'user1'}); return {text: '原样\n\n**回答**', url: URL};},
     select: async url => {selected.push(url);}, list: async () => [{title: '示例', url: URL}],
   };
-  const make = (extra = {}) => new Bridge({store, wechat, provider, credentials, since: 1700000000000, ...extra});
+  const make = (extra = {}) => new Bridge({store, wechat, provider, credentials, since: 1700000000000, now:()=>1800000000000, ...extra});
   return {disk, store, sends, posts, selected, wechat, provider, make, bridge: make()};
 }
 

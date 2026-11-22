@@ -4,9 +4,9 @@ Maintained by [TianDongL](https://github.com/TianDongL). MIT licensed. See the [
 
 Continue your **ChatGPT web conversations from WeChat**. A visible browser on your computer opens ChatGPT; the bridge carries text between that page and your paired WeChat account.
 
-[中文](README.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
+[中文](README.md) · [Feature parity](docs/feature-parity.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
 
-**Status: `0.1.0-alpha.3` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
+**Status: `0.1.0-alpha.4` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
 
 ## Scope
 
@@ -16,7 +16,7 @@ Continue your **ChatGPT web conversations from WeChat**. A visible browser on yo
 - Ordinary reply text is unchanged. Complete HTML components become webpage links while surrounding text and the complete original reply are preserved.
 - Strict standalone commands and persistent delivery state. Uncertain sends are not automatically retried.
 
-V1 does not support groups, other contacts, image/audio messages, files, or scheduled proactive messages. HTML previews require extractable source; components that depend on ChatGPT's own environment may not fully render. Keep your computer, terminal, and bridge browser running.
+V1 supports owner-bound local notifications and optional Dot reminders in Windows native mode. It does not support groups, other contacts, image/audio messages, or files, and does not create schedules itself. HTML previews require extractable source; components that depend on ChatGPT's own environment may not fully render. Keep your computer, terminal, and bridge browser running.
 
 This community project is not affiliated with OpenAI or Tencent. The WeChat adapter follows Tencent's [iLink Bot protocol](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md). The ChatGPT adapter automates the visible webpage with Playwright; it is **not an official ChatGPT API**. Page changes, login challenges, and account restrictions can break compatibility.
 
@@ -56,7 +56,11 @@ Wait for the terminal to report that the bridge is running, then send `/help` to
 
 The first connection is successful when all three are observed: WeChat receives the help text; the test message appears in the ChatGPT page; and its completed reply arrives in WeChat. A successful startup message alone does not verify this path.
 
-Press **Ctrl+C** in the bridge terminal to stop. Use `npm start` to run again. Historical incoming messages not received before startup are skipped; pending messages already saved by the bridge are recovered according to their state. V1 does not install a background service or configure startup at login. While bridging, do not manually send messages, navigate, or leave an unsent draft in the dedicated tab.
+Press **Ctrl+C** in the bridge terminal to stop. Use `npm start` to run again. Historical incoming messages not received before startup are skipped; pending messages already saved by the bridge are recovered according to their state. Windows npm start and start.cmd use a locally compiled .NET Job Object host to clean up the worker and its browser/tunnel descendants when the host or terminal closes. No background service, automatic restart, or startup-at-login is installed. While bridging, do not manually send messages, navigate, or leave an unsent draft in the dedicated tab.
+
+Unsent busy/unavailable requests wait in FIFO order for at most ten minutes. Native uncertain submissions get up to 90 seconds of read-only reconciliation; writes are never repeated. Independent outbox listeners recover late final answers. A pending web answer prevents switching, while help and Dot notifications remain responsive.
+
+Native final text is preserved directly; the current web UI first uses its visible Copy action to capture original Markdown/HTML in memory without reading or changing the system clipboard. When unavailable, the browser falls back to rendered Markdown and exact source formatting cannot be promised.
 
 ## Upgrading from an earlier candidate
 
@@ -64,9 +68,17 @@ Stop the old bridge, update the source, and run `npm ci` while preserving your d
 
 When upgrading from `alpha.2`, run setup once to prepare the preview program; the existing browser login and WeChat pairing can be reused.
 
+## Optional Windows native / Dot mode
+
+Run `npm run setup:native` instead of ordinary setup, then `npm start`. Keep the installed Codex desktop app running and signed in to the intended ChatGPT account, with an existing local Codex work conversation available for caller context. Enter an existing web conversation URL and optionally enable the personal Dot discovered for your own account. Pair your own WeChat bot. This mode needs no bridge browser, copied cookies, API key or browser debugging switch. Ordinary setup switches back to browser mode.
+
+Native mode uses the installed app sign-in in memory, reads a bounded metadata tail from the local conversation index, and validates the personal Dot room and both participants. It ships no maintainer identities. These are non-public interfaces and may change; Dot is optional and not available to every account. Native prompts are limited to 4096 UTF-8 bytes. `/cd gpt` selects your setup default; `/cd dot` selects your bound Dot. Dot reminders continue independently while GPT is selected.
+
+`npm run status` inspects a running bridge; `npm run stop` stops it. Local programs can pass `{"request_id":"unique-id","purpose":"reminder","text":"message"}` on stdin to `node src/cli.js notify --stdin`. Supported purposes are reminder, progress, todo and test. Notifications go only to the paired owner, require a verified owner reply context for the current WeChat login and deduplicate request IDs. No recipient override or assumed Tencent context TTL is exposed. The authenticated local control port is never tunneled.
+
 ## Commands
 
-Commands must occupy a single message on one line. `/` and `\` prefixes are accepted. Commands embedded in prose or multi-line text remain ordinary chat text.
+Commands must occupy a single message on one line. `/` and `\` prefixes are accepted. Commands embedded in prose or multi-line text remain ordinary chat text. `/cd gpt` returns to the setup default. `/cd dot` is available after optional native Dot binding. Native lists show the 12 most recently updated account conversations; browser lists remain limited to visible sidebar links.
 
 Use `/cd` to switch conversations; `/switch` remains a compatible alias. List, current-conversation and selection replies include a `/help` hint.
 

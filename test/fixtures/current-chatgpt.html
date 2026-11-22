@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Current UI synthetic conversation</title></head><body>
+<div aria-label="Synthetic conversation" data-sidebar-archive-chatgpt-id="11111111-1111-4111-8111-111111111111"><a style="display:block;width:200px;height:24px" href="/c/11111111-1111-4111-8111-111111111111"></a></div>
+<main></main><div contenteditable="true" role="textbox" aria-label="询问 ChatGPT" data-composer-markdown></div><button aria-label="发送">发送</button>
+<script>
+window.sendClicks=0;window.osWrites=0;window.originalSource='原文\r\n\r\n\r\n**保留**  \n<div style="color:red">组件</div>\n结尾  ';
+navigator.clipboard.writeText=async()=>{window.osWrites++;};
+document.querySelector('button[aria-label="发送"]').onclick=()=>{
+  window.sendClicks++;
+  const editor=document.querySelector('[contenteditable]'),text=editor.innerText;editor.innerHTML='';
+  const user=document.createElement('div');user.setAttribute('data-chatgpt-search-unit-key','33333333-3333-4333-8333-333333333333:0:user');user.setAttribute('data-chatgpt-search-message-ids','33333333-3333-4333-8333-333333333333');
+  const bubble=document.createElement('div');bubble.setAttribute('data-user-message-bubble','true');bubble.textContent=text;user.append(bubble);document.querySelector('main').append(user);
+  const turn=document.createElement('div');turn.setAttribute('data-talvt-turn-state','complete');
+  turn.innerHTML='<details open>Reasoning must be excluded</details><div data-response-body="44444444-4444-4444-8444-444444444444"><div data-markdown-text-style="assistant-message"><p>Rendered visible fallback</p><button>登录</button></div></div><button aria-label="复制">复制</button>';
+  turn.querySelector('button[aria-label="复制"]').onclick=()=>navigator.clipboard.writeText(window.originalSource);
+  document.querySelector('main').append(turn);
+};
+</script></body></html>
