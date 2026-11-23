@@ -103,12 +103,16 @@ test('WeChat send uncertainty is never replayed; full reply remains locally avai
 test('commands stay local; selecting the same conversation does not navigate again', async () => {
   const f = fixture({...initialState(), selected: OTHER_URL});
   await f.bridge.ingest(batch(msg('/help', '1'), msg('/list', '2'), msg('/cd 1', '3'), msg('/switch 1', '4')));
-  await f.bridge.drain(); assert.equal(f.posts.length, 0); assert.deepEqual(f.selected, [URL]);
+  await f.bridge.drain(); assert.equal(f.posts.length, 0); assert.deepEqual(f.selected, []);
   assert.match(f.sends[0].text, /^\/cd 1 /m);
   assert.match(f.sends[0].text, /^\/help /m);
   assert.match(f.sends[1].text, /\/cd 编号.*\/help/);
   assert.match(f.sends[2].text, /\/help/);
   assert.doesNotMatch(f.sends[0].text, /\/(?:new|ack)\b/);
+  await f.bridge.ingest(batch(msg('first in selected chat', '5')));
+  await f.bridge.drain();
+  assert.deepEqual(f.selected, [URL]);
+  assert.deepEqual(f.posts, ['first in selected chat']);
 });
 
 test('removed command names remain ordinary text in the selected conversation', async () => {

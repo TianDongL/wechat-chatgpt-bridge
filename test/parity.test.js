@@ -183,6 +183,134 @@ test("known unsent messages cannot migrate silently to a newly selected conversa
   assert.match(f.sends.at(-1).text, /没有转发到新入口/);
   assert.equal(f.posts.length, 0);
 });
+test("cached cd waits out a shared 429, then submits the first text only to the selected URL", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  let listCalls = 0;
+  f.provider.list = async () => {
+    listCalls++;
+    return [{ url: OTHER, title: "Cached title" }];
+  };
+  await f.bridge.command({ name: "list" });
+  f.bridge.noteWebLimit({ http_status: 429, retry_after: 75 });
+  assert.match(await f.bridge.command({ name: "list" }), /上次列表/);
+  assert.match(
+    await f.bridge.command({ name: "switch", argument: "1" }),
+    /Cached title/,
+  );
+  assert.equal(listCalls, 1);
+  assert.deepEqual(f.selectedUrls, []);
+  const posts = [];
+  f.provider.submit = async (text, { expectedUrl }) => {
+    posts.push([text, expectedUrl]);
+    return { status: "accepted", message_id: "user-1" };
+  };
+  await f.ingest("first", "1");
+  await f.bridge.drain();
+  await f.bridge.pollWeb();
+  assert.deepEqual(posts, []);
+  assert.deepEqual(f.selectedUrls, []);
+  const restarted = f.make();
+  await restarted.initialize();
+  f.advance(75001);
+  await restarted.drain();
+  await restarted.drain();
+  assert.deepEqual(posts, [["first", OTHER]]);
+  assert.equal(restarted.state.listed[0].title, "Cached title");
+});
+
+test("a restarted rate-limited watcher resumes its saved cursor after cooldown", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  f.bridge.state.watch.cursor = "last-delivered";
+  f.bridge.noteWebLimit({ http_status: 429, retry_after: 70 });
+  const resumed = f.make();
+  await resumed.initialize();
+  assert.equal(resumed.state.watch.deferred, true);
+  await resumed.pollWeb();
+  assert.deepEqual(f.selectedUrls, []);
+  f.advance(70001);
+  await resumed.pollWeb();
+  assert.deepEqual(f.selectedUrls, [URL]);
+  assert.equal(resumed.state.watch.cursor, "last-delivered");
+});
+
+test("confirmed final delivery starts a durable ten-minute return with a single WeChat notice", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  await f.ingest("question", "1");
+  await f.bridge.drain();
+  f.entries([
+    {
+      id: "final",
+      user_id: "user-1",
+      text: "complete reply",
+      finished_turn: true,
+    },
+  ]);
+  await f.bridge.pollWeb();
+  assert.equal(f.bridge.status().autoDotInSeconds, null);
+  await f.bridge.flushOutgoing();
+  assert.equal(f.bridge.status().autoDotInSeconds, 600);
+  f.dotEntries([{ id: "independent", text: "Dot reminder" }]);
+  await f.bridge.pollDot();
+  await f.bridge.flushOutgoing();
+  const resumed = f.make();
+  await resumed.initialize();
+  const poll = async () =>
+    resumed.ingest({ msgs: [], get_updates_buf: "cursor" });
+  f.advance(599999);
+  await poll();
+  assert.equal(resumed.state.selected, URL);
+  f.advance(1);
+  await poll();
+  await resumed.flushOutgoing();
+  assert.equal(resumed.state.selected, "dot");
+  await poll();
+  await resumed.flushOutgoing();
+  assert.equal(f.sends.filter((m) => m.text.includes("已自动切回")).length, 1);
+  assert.equal(
+    f.sends.filter((m) => m.text === "【Dot】\nDot reminder").length,
+    1,
+  );
+});
+
+test("owner input at the deadline takes priority, and a failed WeChat send cannot arm a timer", async () => {
+  const f = harness();
+  await f.bridge.initialize();
+  await f.ingest("first", "1");
+  await f.bridge.drain();
+  f.entries([
+    { id: "final", user_id: "user-1", text: "reply", finished_turn: true },
+  ]);
+  await f.bridge.pollWeb();
+  await f.bridge.flushOutgoing();
+  f.advance(600000);
+  await f.ingest("/where", "2");
+  await f.bridge.drain();
+  assert.equal(f.bridge.status().autoDotInSeconds, 600);
+  await f.ingest("next", "3");
+  await f.bridge.drain();
+  assert.equal(f.bridge.status().autoDotInSeconds, null);
+  f.entries([
+    {
+      id: "second",
+      user_id: "user-2",
+      text: "other reply",
+      finished_turn: true,
+    },
+  ]);
+  await f.bridge.pollWeb();
+  f.wechat.sendText = async () => {
+    throw new Error("indeterminate");
+  };
+  await f.bridge.flushOutgoing();
+  f.advance(601000);
+  await f.bridge.ingest({ msgs: [], get_updates_buf: "same" });
+  assert.equal(f.bridge.status().autoDotInSeconds, null);
+  assert.equal(f.bridge.state.selected, URL);
+});
+
 test("pending GPT prevents switching while Dot reminders continue independently and exactly once", async () => {
   const f = harness();
   await f.bridge.initialize();

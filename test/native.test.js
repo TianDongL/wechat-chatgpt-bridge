@@ -125,6 +125,40 @@ test("native busy, wrong-kind and preflight throttle never attempt a write", asy
   assert.equal(limited.retry_after, 72);
   assert.equal(rate.counts().writes, 0);
 });
+test("deferred baseline keeps a new reply and skips pre-selection history", () => {
+  const c = chat();
+  c.mapping[user] = message(user, "user", "old", "root", 1700000000);
+  c.mapping[answer] = message(answer, "assistant", "new", user, 1800000001);
+  c.current_node = answer;
+  const at = 1800000000000;
+  assert.equal(web.baselineCursor(c, at), user);
+  assert.deepEqual(
+    web.outgoingPage(c, user, at).entries.map((x) => x.text),
+    ["new"],
+  );
+});
+
+test("a slow detail read receives the remaining budget and cannot submit after a timeout", async () => {
+  let timeout,
+    writes = 0;
+  const result = await web.run({ ...input, budget_ms: 14000 }, "fixture", {
+    connect: async () => async (_path, options) => {
+      timeout = options.timeout;
+      throw new DOMException("wait", "TimeoutError");
+    },
+    callTool: async (name) => {
+      if (name !== "read_thread") writes++;
+      return response({
+        thread: { id: target, kind: "chatgpt", status: { type: "idle" } },
+      });
+    },
+  });
+  assert.ok(timeout > 5000 && timeout <= 12800);
+  assert.equal(result.reason, "web_chat_read_timeout");
+  assert.equal(result.status, "not_dispatched");
+  assert.equal(writes, 0);
+});
+
 test("receipt disambiguates old same-text prompts, and refuses two fresh matches", () => {
   const c = chat();
   c.mapping[user] = message(user, "user", input.text, "root", 1700000000);
@@ -226,6 +260,48 @@ test("a final completed behind the cursor reconciles only its exact pending user
       undefined,
     );
   }
+});
+test("an exact pending reply beyond a full or stalled page is found in the same snapshot", () => {
+  const c = chat();
+  let parent = "root";
+  for (let i = 0; i < 20; i++) {
+    const id = "older-" + i;
+    c.mapping[id] = message(id, "assistant", "previous reply", parent);
+    parent = id;
+  }
+  c.mapping[user] = message(user, "user", "prompt", parent);
+  c.mapping[answer] = message(answer, "assistant", "selected reply", user);
+  c.current_node = answer;
+  const full = web.outgoingPage(c, "root", 0, null, user);
+  assert.equal(full.entries.length, 10);
+  assert.equal(full.completed.id, answer);
+  c.mapping["older-0"].message.status = "in_progress";
+  const stalled = web.outgoingPage(c, "root", 0, null, user);
+  assert.deepEqual(stalled.entries, []);
+  assert.equal(stalled.completed.text, "selected reply");
+  assert.equal(
+    web.outgoingPage(c, "root", 0, null, origin).completed,
+    undefined,
+  );
+  assert.equal(web.outgoingPage(c, user, 0, null, user).completed, undefined);
+});
+test("three thousand pre-selection nodes need only one cursor checkpoint", () => {
+  const c = chat();
+  let parent = "root";
+  for (let i = 0; i < 3000; i++) {
+    const id = "old-" + i;
+    c.mapping[id] = message(id, "assistant", "old", parent, 1700000000);
+    parent = id;
+  }
+  c.mapping[user] = message(user, "user", "prompt", parent);
+  c.mapping[answer] = message(answer, "assistant", "reply", user);
+  c.current_node = answer;
+  const result = web.outgoingPage(c, "root", 1799999999000, null, user);
+  assert.deepEqual(
+    result.entries.map((entry) => entry.id),
+    [user, answer],
+  );
+  assert.equal(result.completed, undefined);
 });
 test("readback acknowledgement can reconcile a final already consumed before confirmation", () => {
   const before = chat(),

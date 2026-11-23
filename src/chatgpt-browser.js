@@ -44,6 +44,18 @@ const normalize = (value) => value.replace(/\r\n?/g, "\n").trim();
 // This function executes in the page. It reads rendered DOM only: no cookies,
 // application stores, network interception, backend APIs or hidden model output.
 function readRenderedPage() {
+  function createdAt(element) {
+    const raw =
+      element?.getAttribute("data-message-create-time") ||
+      element?.getAttribute("data-created-at");
+    if (!raw) return null;
+    const value = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : Date.parse(raw);
+    return Number.isFinite(value)
+      ? value < 1e12
+        ? value * 1000
+        : value
+      : null;
+  }
   const visible = (element) =>
     !!element &&
     !!(
@@ -266,6 +278,7 @@ function readRenderedPage() {
     return {
       id,
       role,
+      createdAt: createdAt(element) ?? createdAt(article),
       text:
         role === "user"
           ? element.innerText
@@ -310,6 +323,7 @@ function readRenderedPage() {
           messages.push({
             id,
             role,
+            createdAt: createdAt(element),
             text: bubble.innerText,
             final: false,
             stopped: false,
@@ -329,6 +343,7 @@ function readRenderedPage() {
         messages.push({
           id,
           role,
+          createdAt: createdAt(element) ?? createdAt(article),
           text:
             candidates.length === 1
               ? restore(
@@ -377,6 +392,23 @@ export class ChatGPTBrowser {
     this._pending = false;
   }
 
+  async _navigate(url) {
+    const response = await this.page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    this._rateLimitedUrl = response?.status() === 429 ? url : null;
+    if (!this._rateLimitedUrl) return;
+    const value = await response.headerValue("retry-after");
+    const seconds = /^\d+$/.test(value ?? "")
+      ? Number(value)
+      : Math.ceil((Date.parse(value) - Date.now()) / 1000);
+    throw Object.assign(bridgeError("rate_limited"), {
+      http_status: 429,
+      retry_after: seconds > 0 && Number.isFinite(seconds) ? seconds : 60,
+    });
+  }
+
   async open(url = "https://chatgpt.com/") {
     url = checkedUrl(url);
     if (this._pending || this._opening) throw bridgeError("busy");
@@ -399,10 +431,7 @@ export class ChatGPTBrowser {
         this.page = this.context.pages()[0] || (await this.context.newPage());
       }
       if (generation !== this._generation) throw bridgeError("browser_closed");
-      await this.page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000,
-      });
+      await this._navigate(url);
       // Initial login may redirect to an authentication page. Keep this visible
       // browser open for the user; send/select retain the strict origin guard.
       await this._waitForUi();
@@ -523,29 +552,36 @@ export class ChatGPTBrowser {
 
   async select(url) {
     url = checkedUrl(url, false);
+    if (!this.page && this._generation === 0) return this.open(url);
     if (this._pending) throw bridgeError("busy");
     this._url();
     const current = await this.page.evaluate(readRenderedPage);
     if (current.busy) throw bridgeError("busy");
     if (current.draft.trim()) throw bridgeError("draft_present");
-    if (this._url() !== url)
-      await this.page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000,
-      });
+    if (this._url() !== url || this._rateLimitedUrl === url)
+      await this._navigate(url);
     if (this._url() !== url) throw bridgeError("navigation_changed");
     await this._waitForUi();
     return this.inspect();
   }
 
-  async baseline(url = this._url()) {
+  async baseline(url = this._url(), openedAt) {
     if (checkedUrl(url, false) !== this._url())
       throw bridgeError("navigation_changed");
     const snapshot = await this.page.evaluate(readRenderedPage);
     if (!snapshot.ready) return { status: "unavailable" };
+    const first =
+      openedAt == null
+        ? -1
+        : snapshot.messages.findIndex(
+            (m) => m.createdAt != null && m.createdAt >= openedAt,
+          );
     return {
       status: "ready",
-      cursor: snapshot.messages.at(-1)?.id || "",
+      cursor:
+        first < 0
+          ? snapshot.messages.at(-1)?.id || ""
+          : snapshot.messages[first - 1]?.id || "",
       title: snapshot.title,
       busy: snapshot.busy,
     };

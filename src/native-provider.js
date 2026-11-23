@@ -112,13 +112,16 @@ export class NativeProvider {
   async open(url) {
     return this.select(url);
   }
+  useTarget(url, title = "") {
+    this.url = conversationUrl(url);
+    this.title = title;
+  }
   async select(url) {
     url = conversationUrl(url);
     const result = await this.call("baseline", url);
     if (result.status !== "ready")
-      throw new Error("native_conversation_unavailable");
-    this.url = url;
-    this.title = result.title;
+      throw Object.assign(new Error("native_conversation_unavailable"), result);
+    this.useTarget(url, result.title);
     return {
       url,
       title: result.title,
@@ -136,12 +139,17 @@ export class NativeProvider {
       busy: result.status === "busy",
     };
   }
-  async baseline(url = this.url) {
-    return this.call("baseline", url);
+  async baseline(url = this.url, openedAt) {
+    return this.call(
+      "baseline",
+      url,
+      openedAt === undefined ? {} : { opened_at: openedAt },
+    );
   }
   async list() {
     const result = await this.call("list");
-    if (result.status !== "list") throw new Error("native_list_unavailable");
+    if (result.status !== "list")
+      throw Object.assign(new Error("native_list_unavailable"), result);
     return result.items.map((item) => ({
       title: item.title,
       url: conversationUrl(item.id),

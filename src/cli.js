@@ -117,11 +117,14 @@ async function ask(question, signal = abort.signal) {
   });
   return prompt.question(question, { signal });
 }
-async function openBrowser(url) {
+function createBrowser() {
   if (!browserInstalled()) throw new Error("browser_missing");
-  provider = new ChatGPTBrowser({
+  return new ChatGPTBrowser({
     profileDir: path.join(dataDir, "browser-profile"),
   });
+}
+async function openBrowser(url) {
+  provider = createBrowser();
   await provider.open(url || "https://chatgpt.com/");
 }
 async function setup() {
@@ -249,12 +252,17 @@ async function start() {
   const settings = store.read("settings.json", { mode: "browser" });
   if (settings.mode === "native") {
     provider = new NativeProvider({ settings });
-    if (bridge.state.selected !== "dot")
-      await provider.open(bridge.state.selected);
   } else {
-    await openBrowser(bridge.state.selected);
-    const status = await provider.inspect();
-    if (!status.ready) throw new Error("browser_not_ready");
+    provider = createBrowser();
+    if (!bridge.webWait()) {
+      try {
+        const status = await provider.open(bridge.state.selected);
+        if (!status.ready) throw new Error("browser_not_ready");
+      } catch (error) {
+        if (error.http_status !== 429) throw error;
+        bridge.noteWebLimit(error);
+      }
+    }
   }
   bridge.provider = provider;
   await bridge.initialize();

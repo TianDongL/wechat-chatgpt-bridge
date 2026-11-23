@@ -120,6 +120,47 @@ test("inspect and list use visible rendered UI only", async (t) => {
   ]);
 });
 
+test("selection recovers on the same URL after a navigation 429", async (t) => {
+  const { provider, page } = await harness(t);
+  const target = "https://chatgpt.com/c/22222222-2222-4222-8222-222222222222";
+  let visits = 0;
+  await page.route(target, (route) => {
+    visits++;
+    return visits === 1
+      ? route.fulfill({
+          status: 429,
+          headers: { "retry-after": "75" },
+          body: "Limited",
+        })
+      : route.fulfill({ contentType: "text/html", body: fixture });
+  });
+  await assert.rejects(
+    provider.select(target),
+    (err) => err.http_status === 429 && err.retry_after === 75,
+  );
+  assert.equal(page.url(), target);
+  const selected = await provider.select(target);
+  assert.equal(selected.ready, true);
+  assert.equal(visits, 2);
+  assert.equal(await page.evaluate(() => window.sendClicks), 0);
+});
+
+test("late browser baseline uses rendered timestamps when available", async (t) => {
+  const { provider, page } = await harness(t);
+  const openedAt = 1800000000000;
+  assert.equal(
+    (await provider.baseline(URL, openedAt)).cursor,
+    "old-assistant",
+  );
+  await page.locator('[data-message-id="old-user"]').evaluate((el) => {
+    el.setAttribute("data-created-at", "1700000000");
+  });
+  await page.locator('[data-message-id="old-assistant"]').evaluate((el) => {
+    el.setAttribute("data-message-create-time", "1800000001");
+  });
+  assert.equal((await provider.baseline(URL, openedAt)).cursor, "old-user");
+});
+
 test("refuses an existing draft without clicking or overwriting it", async (t) => {
   const { provider, page } = await harness(t);
   await page.locator("#prompt-textarea").fill("My unfinished draft");

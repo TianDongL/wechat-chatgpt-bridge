@@ -6,7 +6,7 @@ Continue your **ChatGPT web conversations from WeChat**. A visible browser on yo
 
 [中文](README.md) · [Feature parity](docs/feature-parity.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
 
-**Status: `0.1.0-alpha.4` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
+**Status: `0.1.0-alpha.5` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
 
 ## Scope
 
@@ -91,7 +91,9 @@ Use `/cd` to switch conversations; `/switch` remains a compatible alias. List, c
 | `/cd https://chatgpt.com/c/<uuid>` | Select an ordinary ChatGPT conversation URL |
 | `/cd <uuid>` | Select a conversation by its web ID |
 
-Sidebar results are not your full history. List numbers are temporary; run `/list` again after restarting. Conversation IDs here belong to ChatGPT web URLs, not the API.
+Numbers refer to the last successful `/list` and survive a restart. `/cd 1` selects that entry locally. If ChatGPT reports a rate limit, the next message waits for the selected conversation for up to ten minutes. Run `/list` once to populate the list. Conversation IDs come from ChatGPT web URLs.
+
+With a personal Dot bound, the bridge starts a ten-minute timer after WeChat confirms delivery of a complete web reply. After ten minutes without another owner message, it selects Dot and sends a single WeChat notice. A command restarts the timer. A new prompt waits for its own delivered reply to start a fresh timer. Dot reminders continue independently.
 
 After an uncertain webpage submission or response, inspect both ChatGPT and WeChat. The original delivery record is retained and never automatically retried; no extra command is needed to unlock later messages. Each new message still requires the selected conversation, a signed-in idle page, and an empty composer. If delivery back to WeChat fails or is uncertain, the complete reply is saved in the data directory's `replies` folder and is not automatically sent again. A timeout may happen after the remote service accepted a message. The bridge does not promise exactly-once delivery across network failures.
 

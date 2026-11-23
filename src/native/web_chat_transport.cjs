@@ -114,6 +114,12 @@ function turnEntry(node, userId, openedAt) {
     ),
   };
 }
+function baselineCursor(chat, openedAt) {
+  if (openedAt == null) return chat.current_node;
+  const branch = selectedBranch(chat);
+  const first = branch.findIndex((node) => node.message?.create_time * 1000 >= openedAt);
+  return first < 0 ? chat.current_node : (branch[first - 1]?.id ?? "");
+}
 function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
   const branch = selectedBranch(chat),
     index = branch.findIndex((n) => n.id === after);
@@ -121,44 +127,41 @@ function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
   const confirmation = receipt ? confirmReceipt(chat, receipt) : null;
   pendingUserId ??=
     confirmation?.status === "accepted" ? confirmation.message_id : null;
-  let userId = null,
+  let pageClosed = false,
+    userId = null,
     completed = null;
   for (let i = 0; i < branch.length; i++) {
     const node = branch[i],
       m = node.message;
     if (m?.author?.role === "user") userId = node.id;
-    if (i <= index) {
-      // A final node may be completed in place after its ID was consumed, or
-      // the send acknowledgement may arrive after the outbox read. Reconcile
-      // only the exact pending user turn, without rewinding the cursor.
-      if (pendingUserId && userId === pendingUserId) {
-        const entry = turnEntry(node, userId, openedAt);
-        if (entry.finished_turn) completed = entry;
-      }
+    const onPage = i > index && !pageClosed;
+    const matches = pendingUserId != null && userId === pendingUserId;
+    if (!onPage && !matches) continue;
+    const entry = turnEntry(node, userId, openedAt);
+    // The requested turn may be behind the cursor or beyond a full or stalled
+    // page. Match it on this branch in the same snapshot, without moving the cursor.
+    if (matches && entry.finished_turn) completed = entry;
+    if (!onPage) continue;
+    if (m?.author?.role === "assistant" &&
+        (!["finished_successfully", "finished_error", "cancelled"].includes(m.status) ||
+         (m.status === "finished_successfully" && m.metadata?.is_complete === false))) {
+      pageClosed = true;
       continue;
     }
-    if (!m) {
-      entries.push({ id: node.id, text: null, finished_turn: false });
+    // A run of nodes with nothing to deliver needs only its last cursor.
+    const previous = entries.at(-1);
+    if (previous && !previous.finished_turn && !entry.finished_turn) {
+      entries[entries.length - 1] = entry;
     } else {
-      const assistant = m.author?.role === "assistant";
-      if (
-        assistant &&
-        (!["finished_successfully", "finished_error", "cancelled"].includes(
-          m.status,
-        ) ||
-          (m.status === "finished_successfully" &&
-            m.metadata?.is_complete === false))
-      )
-        break;
-      entries.push(turnEntry(node, userId, openedAt));
+      entries.push(entry);
     }
-    if (entries.length >= 10) break;
+    if (entries.length >= 10) pageClosed = true;
   }
   return {
     status: "page",
     entries,
     ...(confirmation ? { confirmation } : {}),
-    ...(completed ? { completed } : {}),
+    ...(completed && !entries.some((entry) => entry.id === completed.id) ? { completed } : {}),
   };
 }
 async function run(input, executable, dependencies = {}) {
@@ -179,6 +182,10 @@ async function run(input, executable, dependencies = {}) {
   )
     return { status: "rejected" };
   if (
+    input.operation === "baseline" && input.opened_at != null &&
+    (!Number.isSafeInteger(input.opened_at) || input.opened_at < 0)
+  ) return { status: "rejected" };
+  if (
     input.operation === "outbox" &&
     (typeof input.after !== "string" ||
       !Number.isSafeInteger(input.opened_at) ||
@@ -189,6 +196,14 @@ async function run(input, executable, dependencies = {}) {
   const native = dependencies.callTool ?? callTool,
     getConnection = dependencies.connect ?? connect;
   const now = dependencies.now ?? Date.now;
+  const maxBudget = input.operation === "post" ? 36000 : 24000;
+  const budget = Number.isFinite(input.budget_ms) ? Math.min(input.budget_ms, maxBudget) : maxBudget;
+  const deadline = Date.now() + budget - 1200;
+  function remaining(cap) {
+    const ms = Math.min(cap, deadline - Date.now());
+    if (ms < 100) throw failure("web_chat_read_timeout");
+    return ms;
+  }
   const context = {
     threadId: input.origin_thread,
     turnId: "mcp-turn-wechat-" + randomUUID(),
@@ -198,31 +213,37 @@ async function run(input, executable, dependencies = {}) {
     receipt;
   try {
     const request = await getConnection(executable);
-    async function get(path) {
-      const r = await request(path, { timeout: 5000 });
-      if (!r.ok) {
-        const header = r.headers?.get("retry-after");
-        const seconds =
-          header == null
-            ? NaN
-            : /^\d+$/.test(header)
-              ? Number(header)
-              : (Date.parse(header) - now()) / 1000;
-        throw failure("web_chat_http_error", {
-          http_status: r.status,
-          ...(r.status === 429
-            ? {
-                retry_after: Number.isFinite(seconds)
-                  ? Math.max(1, Math.ceil(seconds))
-                  : 60,
-              }
-            : {}),
-        });
+    async function get(path, cap = 5000) {
+      try {
+        const r = await request(path, { timeout: remaining(cap) });
+        if (!r.ok) {
+          const header = r.headers?.get("retry-after");
+          const seconds =
+            header == null
+              ? NaN
+              : /^\d+$/.test(header)
+                ? Number(header)
+                : (Date.parse(header) - now()) / 1000;
+          throw failure("web_chat_http_error", {
+            http_status: r.status,
+            ...(r.status === 429
+              ? {
+                  retry_after: Number.isFinite(seconds)
+                    ? Math.max(1, Math.ceil(seconds))
+                    : 60,
+                }
+              : {}),
+          });
+        }
+        return await r.json();
+      } catch (error) {
+        if (error?.name === "TimeoutError" || error?.name === "AbortError")
+          throw failure("web_chat_read_timeout");
+        throw error;
       }
-      return r.json();
     }
     async function read() {
-      const data = await get("/conversation/" + input.target);
+      const data = await get("/conversation/" + input.target, 18000);
       if (
         data?.conversation_id !== input.target ||
         !data.mapping?.[data.current_node]
@@ -253,7 +274,7 @@ async function run(input, executable, dependencies = {}) {
         "read_thread",
         { threadId: input.target, includeTurns: false },
         context,
-        { timeout: 6000 },
+        { timeout: remaining(6000) },
       ),
     );
     const meta = metadata.thread;
@@ -267,7 +288,7 @@ async function run(input, executable, dependencies = {}) {
     if (input.operation === "baseline")
       return {
         status: "ready",
-        cursor: before.current_node,
+        cursor: baselineCursor(before, input.opened_at),
         title: String(meta.title ?? before.title ?? "").slice(0, 160),
         busy: meta.status?.type !== "idle",
       };
@@ -278,6 +299,7 @@ async function run(input, executable, dependencies = {}) {
         reason: "confirmation_baseline_too_large",
       };
     // Mark before invoking the RPC. Even a transport timeout can follow a successful write.
+    const writeTimeout = remaining(8000);
     attempted = true;
     try {
       const result = decode(
@@ -285,7 +307,7 @@ async function run(input, executable, dependencies = {}) {
           "send_message_to_thread",
           { threadId: input.target, prompt: input.text },
           context,
-          { timeout: 8000 },
+          { timeout: writeTimeout },
         ),
       );
       acknowledged = result.threadId === input.target;
@@ -339,6 +361,7 @@ if (require.main === module) {
   });
 }
 module.exports = {
+  baselineCursor,
   outgoingPage,
   makeReceipt,
   confirmReceipt,

@@ -36,7 +36,7 @@ export const HELP = `微信 × ChatGPT 网页桥
 /help 查看命令
 /where 查看当前会话
 /list 列出可用会话（最多 12 项）
-/cd 1 切换到最近列表的第 1 项
+/cd 1 在本机选中上次列表的第 1 项，限流时正文等待连接
 /cd 网页会话链接或 UUID
 /cd gpt 回到设置时绑定的默认 GPT 会话
 
@@ -47,7 +47,7 @@ export function helpText({ dot = false, native = false } = {}) {
   return (
     (native ? HELP.replace("桥的浏览器", "Codex") : HELP) +
     (dot
-      ? "\n/cd dot 回到原 Dot 会话\n切换到 GPT 后仍接收 Dot 主动提醒；只有当前入口为 Dot 时普通文字才发给 Dot。"
+      ? "\n/cd dot 回到原 Dot 会话\n切换到 GPT 后仍接收 Dot 主动提醒。只有当前入口为 Dot 时普通文字才发给 Dot。网页回复送达微信后，10 分钟没有你的新消息会自动切回 Dot，并在微信提醒一次。"
       : "")
   );
 }

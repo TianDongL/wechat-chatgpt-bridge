@@ -11,6 +11,7 @@ import { splitPreviewText } from "./html-preview.js";
 export const digest = (value) =>
   createHash("sha256").update(value).digest("hex");
 const INPUT_TTL = 600_000,
+  IDLE_RETURN_MS = 600_000,
   MAX_RECORDS = 10_000;
 export function initialState() {
   return { version: 1, cursor: "", selected: null, records: {} };
@@ -39,10 +40,11 @@ export class Bridge {
       now,
     });
     this.state = store.read("state.json", initialState());
-    this.listed = [];
+    this.listed = this.state.listed ?? [];
     this.generation = 0;
     this._sendChain = Promise.resolve();
     this.nextWebPoll = 0;
+    this.idleWebInterval = 30000;
     this.nextDotPoll = 0;
     if (
       this.state.version !== 1 ||
@@ -98,6 +100,23 @@ export class Bridge {
         ["accepted", "confirming"].includes(r.status),
     );
   }
+  webWait() {
+    const seconds = Math.ceil(
+      ((this.state.webRetryAt || 0) - this.now()) / 1000,
+    );
+    return seconds > 0 ? `网页请求受到限流，至少 ${seconds} 秒后再连接。` : "";
+  }
+  noteWebLimit(result) {
+    if (result?.http_status !== 429) return;
+    const seconds = Number.isFinite(result.retry_after)
+      ? result.retry_after
+      : 60;
+    const until = this.now() + 1000 * Math.max(60, seconds);
+    if (until > (this.state.webRetryAt || 0)) {
+      this.state.webRetryAt = until;
+      this.save();
+    }
+  }
   async initialize() {
     if (this.state.selected === "dot" && !this.provider.dotEnabled)
       throw new Error("dot_not_configured");
@@ -107,12 +126,29 @@ export class Bridge {
         (r.messageId || (r.status === "confirming" && r.receipt)) &&
         ["accepted", "uncertain", "confirming"].includes(r.status),
     );
-    if (
-      this.state.selected &&
-      this.state.selected !== "dot" &&
-      (!recovering || this.state.watch?.url !== this.state.selected)
-    )
-      await this.resetWatch(this.state.selected);
+    const url = this.state.selected;
+    if (url && url !== "dot") {
+      this.provider.useTarget?.(url, this.state.selectedTitle);
+      const watch = this.state.watch;
+      if (
+        !this.webWait() &&
+        (watch?.url !== url ||
+          (!recovering && !watch?.fromList && !watch?.deferred))
+      ) {
+        try {
+          await this.resetWatch(url);
+        } catch (error) {
+          this.noteWebLimit(error);
+          if (!this.webWait()) throw error;
+        }
+      }
+      if (this.webWait()) {
+        const previous =
+          watch?.url === url ? watch : { url, openedAt: this.now() };
+        this.state.watch = { ...previous, deferred: true };
+        this.save();
+      }
+    }
     if (this.provider.dotEnabled) {
       const b = await this.provider.dotCall("baseline");
       if (b.status !== "ready") throw new Error("dot_not_ready");
@@ -125,10 +161,55 @@ export class Bridge {
       selected?.cursor !== undefined
         ? { status: "ready", ...selected }
         : await this.provider.baseline(url);
-    if (b.status !== "ready") throw new Error("provider_not_ready");
+    if (b.status !== "ready")
+      throw Object.assign(new Error("provider_not_ready"), b);
     this.state.watch = { url, cursor: b.cursor, openedAt: this.now() };
     this.state.selectedTitle = b.title || "";
     this.nextWebPoll = 0;
+    this.save();
+  }
+  async connectListed(watch) {
+    if (!watch?.deferred) return true;
+    if (this.webWait() || this.now() < this.nextWebPoll) return false;
+    if (!this._connectingWatch) {
+      this._connectingWatch = this.readListed(watch).finally(() => {
+        this._connectingWatch = null;
+      });
+    }
+    await this._connectingWatch;
+    return this.state.watch === watch && !watch.deferred;
+  }
+  async readListed(watch) {
+    let baseline;
+    try {
+      if (this.provider.useTarget) {
+        baseline = await this.provider.baseline(watch.url, watch.openedAt);
+      } else {
+        const page = await this.provider.select(watch.url);
+        baseline =
+          page?.cursor !== undefined || !this.provider.baseline
+            ? {
+                status: page?.ready === false ? "unavailable" : "ready",
+                cursor: "",
+                ...page,
+              }
+            : await this.provider.baseline(watch.url, watch.openedAt);
+      }
+    } catch (error) {
+      baseline = error;
+    }
+    this.noteWebLimit(baseline);
+    if (this.state.watch !== watch || this.signal?.aborted) return;
+    if (baseline?.status !== "ready" || typeof baseline.cursor !== "string") {
+      this.nextWebPoll = Math.max(
+        this.now() + 12000,
+        this.state.webRetryAt || 0,
+      );
+      return;
+    }
+    watch.cursor ??= baseline.cursor;
+    delete watch.deferred;
+    this.state.selectedTitle = baseline.title || this.state.selectedTitle;
     this.save();
   }
   async ingest(batch) {
@@ -144,6 +225,11 @@ export class Bridge {
         continue;
       const key = digest(`${this.credentials.botId}\0${m.id}`);
       if (Object.hasOwn(this.state.records, key)) continue;
+      if (this.state.idleReturn) {
+        if (parseCommand(m.text))
+          this.state.idleReturn.due = this.now() + IDLE_RETURN_MS;
+        else delete this.state.idleReturn;
+      }
       this.add(key, {
         kind: "inbox",
         status: "queued",
@@ -163,7 +249,42 @@ export class Bridge {
         };
     }
     this.state.cursor = batch.get_updates_buf;
+    this.returnIdleToDot();
     this.save(); // Commit inbox and cursor before effects.
+  }
+  returnIdleToDot() {
+    const timer = this.state.idleReturn;
+    if (
+      !timer ||
+      this.now() < timer.due ||
+      !this.provider.dotEnabled ||
+      timer.url !== this.state.selected ||
+      this._submitTask ||
+      this.webPending()
+    )
+      return;
+    if (
+      Object.values(this.state.records).some(
+        (r) =>
+          r.status === "queued" ||
+          (r.sourceUrl === timer.url &&
+            ["outgoing", "replying"].includes(r.status)),
+      )
+    )
+      return;
+    const key = digest("idle-dot:" + timer.reply);
+    if (!this.state.records[key])
+      this.add(key, {
+        kind: "idle_return",
+        status: "outgoing",
+        at: this.now(),
+        text: "网页回复已送达微信。之后 10 分钟没有收到你的新消息，已自动切回原 Dot 会话。",
+      });
+    this.generation++;
+    this.state.selected = "dot";
+    this.state.selectedTitle = "";
+    delete this.state.watch;
+    delete this.state.idleReturn;
   }
   async drain({ wait = true } = {}) {
     if (this._draining) return;
@@ -220,7 +341,12 @@ export class Bridge {
     this._sendChain = operation;
     return operation;
   }
-  async deliver(key, r, text, { renderHtml = false, sourceUrl } = {}) {
+  async deliver(
+    key,
+    r,
+    text,
+    { renderHtml = false, sourceUrl, webReply = false } = {},
+  ) {
     this.store.saveReply(key, text);
     if (this.signal?.aborted) {
       r.status = "delivery_uncertain";
@@ -276,6 +402,23 @@ export class Bridge {
       }
     }
     if (r.status === "replying") r.status = "done";
+    if (
+      r.status === "done" &&
+      webReply &&
+      this.provider.dotEnabled &&
+      sourceUrl === this.state.selected &&
+      (r.webOpenedAt === undefined ||
+        r.webOpenedAt === this.state.watch?.openedAt) &&
+      !Object.values(this.state.records).some(
+        (item) => item.status === "queued" && !parseCommand(item.text),
+      )
+    ) {
+      this.state.idleReturn = {
+        url: sourceUrl,
+        reply: key,
+        due: this.now() + IDLE_RETURN_MS,
+      };
+    }
     delete r.text;
     delete r.contextToken;
     this.save();
@@ -307,25 +450,46 @@ export class Bridge {
       const n = Object.values(this.state.records).filter(
         (r) => r.status === "uncertain",
       ).length;
-      return `${where()}${n ? `\n有 ${n} 条历史结果未确认，旧消息不会重发。` : ""}\n发送 /help 查看命令。`;
+      const waiting = this.state.watch?.deferred
+        ? "\n" + (this.webWait() || "正在等待连接所选网页。")
+        : "";
+      return `${where()}${waiting}${n ? `\n有 ${n} 条历史结果未确认，旧消息不会重发。` : ""}\n发送 /help 查看命令。`;
     }
     if (command.name === "list") {
-      this.listed = (await this.provider.list()).slice(0, 12);
+      if (!this.webWait()) {
+        try {
+          const items = (await this.provider.list()).slice(0, 12).map((x) => ({
+            url: conversationUrl(x.url),
+            title: x.title.slice(0, 160),
+          }));
+          this.state.listed = items;
+          this.save();
+          this.listed = items;
+        } catch (error) {
+          this.noteWebLimit(error);
+          if (!this.webWait()) throw error;
+        }
+      }
+      const wait = this.webWait();
       return this.listed.length
-        ? this.listed
-            .map(
-              (x, i) =>
-                `${i + 1}. ${x.title.replace(/[\r\n]/g, " ").slice(0, 160)}\n${x.url}`,
-            )
-            .join("\n\n") + "\n\n发送 /cd 编号切换；发送 /help 查看命令。"
-        : "暂无可用会话。请用 /cd 完整会话链接选择已有会话。发送 /help 查看命令。";
+        ? (wait ? wait + " 以下沿用上次列表：\n" : "") +
+            this.listed
+              .map(
+                (x, i) =>
+                  `${i + 1}. ${x.title.replace(/[\r\n]/g, " ").slice(0, 160)}\n${x.url}`,
+              )
+              .join("\n\n") +
+            "\n\n发送 /cd 编号切换；发送 /help 查看命令。"
+        : wait
+          ? wait + " 尚无上次列表，请稍后发送 /list。"
+          : "暂无可用会话。请用 /cd 完整会话链接选择已有会话。发送 /help 查看命令。";
     }
     if (!command.argument)
       return helpText({
         dot: !!this.provider.dotEnabled,
         native: !!this.provider.submit,
       });
-    let target;
+    let target, listed;
     if (command.argument === "dot") {
       if (!this.provider.dotEnabled)
         return "尚未配置 Dot；需要 Windows 本机接入模式并在 setup-native 绑定自己的 Dot。当前入口保持不变。发送 /help 查看命令。";
@@ -335,9 +499,9 @@ export class Bridge {
       if (!target)
         return "尚未配置默认 GPT 会话，请先运行 setup。发送 /help 查看命令。";
     } else {
-      const item = /^[1-9]\d*$/.test(command.argument)
-        ? this.listed[Number(command.argument) - 1]?.url
-        : command.argument;
+      const byNumber = /^[1-9]\d*$/.test(command.argument);
+      listed = byNumber ? this.listed[Number(command.argument) - 1] : null;
+      const item = byNumber ? listed?.url : command.argument;
       try {
         target = conversationUrl(item);
       } catch {
@@ -348,6 +512,28 @@ export class Bridge {
       return `已在该会话：\n${where()}\n发送 /help 查看命令。`;
     if (this._submitTask || this.webPending())
       return "上一条网页消息仍在提交或等待回复，暂不能切换；当前入口保持不变。发送 /where 查看入口。";
+    if (listed) {
+      this.generation++;
+      delete this.state.idleReturn;
+      this.state.selected = target;
+      this.state.defaultSelected ??= target;
+      this.state.selectedTitle = listed.title;
+      this.state.watch = {
+        url: target,
+        openedAt: this.now(),
+        deferred: true,
+        fromList: true,
+      };
+      this.provider.useTarget?.(target, listed.title);
+      this.nextWebPoll = 0;
+      this.idleWebInterval = 30000;
+      this.save();
+      return `已切换。\n${where()}\n${this.webWait() || "正在等待连接所选网页。"}\n发送 /help 查看命令。`;
+    }
+    if (target !== "dot" && this.webWait())
+      return this.webWait() + " 当前入口保持不变。";
+    if (target !== "dot" && this._connectingWatch)
+      return "正在连接网页，请稍后再切换。当前入口保持不变。";
     const selected =
       target === "dot" ? null : await this.provider.select(target);
     let baseline = null;
@@ -359,6 +545,8 @@ export class Bridge {
       if (baseline.status !== "ready") throw new Error("provider_not_ready");
     }
     this.generation++;
+    this.idleWebInterval = 30000;
+    delete this.state.idleReturn;
     this.state.selected = target;
     this.state.defaultSelected ??= target === "dot" ? null : target;
     if (baseline) {
@@ -401,8 +589,11 @@ export class Bridge {
       let text;
       try {
         text = await this.command(command);
-      } catch {
-        text = "当前入口暂不可用，请检查登录与本机程序；发送 /where 核对入口。";
+      } catch (error) {
+        this.noteWebLimit(error);
+        text = this.webWait()
+          ? this.webWait() + " 当前入口保持不变。"
+          : "当前入口暂不可用，请检查登录与本机程序；发送 /where 核对入口。";
       }
       await this.reply(key, r, text);
       return;
@@ -431,6 +622,29 @@ export class Bridge {
       );
       return;
     }
+    if (
+      this.state.selected !== "dot" &&
+      (this.webWait() || this.state.watch?.deferred)
+    ) {
+      r.target ??= this.state.selected;
+      this.save();
+      if (this.webWait() || !(await this.connectListed(this.state.watch))) {
+        r.retryAt = Math.max(
+          this.state.webRetryAt || 0,
+          this.nextWebPoll,
+          this.now() + 1000,
+        );
+        this.save();
+        await this.notice(
+          key,
+          r,
+          (this.webWait() || "正在连接所选网页会话。") +
+            " 这条消息将按顺序等待发送到所选会话，有效期为 10 分钟。",
+          "waiting",
+        );
+        return;
+      }
+    }
     r.status = "submitting";
     r.target ??= this.state.selected;
     r.requestId ??= randomUUID();
@@ -453,6 +667,7 @@ export class Bridge {
       } catch {
         result = { status: "uncertain" };
       }
+      if (r.target !== "dot") this.noteWebLimit(result);
       if (result.status === "not_dispatched") {
         if (result.reason === "invalid_text") {
           await this.reply(
@@ -539,6 +754,7 @@ export class Bridge {
     await this.reply(key, r, result.text, {
       renderHtml: true,
       sourceUrl: result.url,
+      webReply: true,
     });
   }
   context() {
@@ -579,6 +795,7 @@ export class Bridge {
       status: "outgoing",
       text,
       sourceUrl,
+      ...(sourceUrl ? { webOpenedAt: this.state.watch?.openedAt } : {}),
       at: this.now(),
     });
     this.save();
@@ -590,7 +807,7 @@ export class Bridge {
       for (const [key, r] of Object.entries(this.state.records)) {
         if (this.signal?.aborted) break;
         if (r.status !== "outgoing") continue;
-        if (this.now() - r.at >= INPUT_TTL) {
+        if (r.kind !== "idle_return" && this.now() - r.at >= INPUT_TTL) {
           this.store.saveReply(key, r.text);
           r.status = "expired";
           delete r.text;
@@ -603,6 +820,7 @@ export class Bridge {
         await this.reply(key, r, r.text, {
           renderHtml: true,
           sourceUrl: r.sourceUrl,
+          webReply: r.kind === "outbox" && !!r.sourceUrl,
         });
       }
     } finally {
@@ -616,15 +834,20 @@ export class Bridge {
       !this.provider.poll ||
       this.state.selected === "dot" ||
       !this.state.watch ||
+      this.webWait() ||
       this.now() < this.nextWebPoll ||
       (this._submitTask && !this.provider.submit)
     )
       return;
     this._pollingWeb = true;
     const generation = this.generation,
-      watch = { ...this.state.watch },
+      watch = this.state.watch,
       pending = this.webPending();
     try {
+      if (watch.deferred) {
+        await this.connectListed(watch);
+        return;
+      }
       let result;
       try {
         result = await this.provider.poll({
@@ -632,9 +855,10 @@ export class Bridge {
           receipt: pending?.receipt,
           pendingUserId: pending?.messageId,
         });
-      } catch {
-        result = { status: "unavailable" };
+      } catch (error) {
+        result = error || { status: "unavailable" };
       }
+      this.noteWebLimit(result);
       if (
         generation !== this.generation ||
         this.state.selected !== watch.url ||
@@ -718,7 +942,12 @@ export class Bridge {
         this.now() +
         (result.entries.length >= 10
           ? 250
-          : (result.poll_after_ms ?? (this.webPending() ? 12000 : 30000)));
+          : (result.poll_after_ms ??
+            (this.webPending() ? 12000 : this.idleWebInterval)));
+      this.idleWebInterval =
+        result.entries.length || pending || this.webPending()
+          ? 30000
+          : Math.min(120000, this.idleWebInterval * 2);
     } finally {
       this._pollingWeb = false;
     }
@@ -812,6 +1041,12 @@ export class Bridge {
       mode: this.provider?.submit ? "native" : "browser",
       selected: this.state.selected === "dot" ? "dot" : "gpt",
       pending: !!this._submitTask || !!this.webPending(),
+      autoDotInSeconds: this.state.idleReturn
+        ? Math.max(
+            0,
+            Math.ceil((this.state.idleReturn.due - this.now()) / 1000),
+          )
+        : null,
       contextReady: !!this.context(),
       dotEnabled: !!this.provider?.dotEnabled,
       htmlReady: !!this.preview?.ready,
