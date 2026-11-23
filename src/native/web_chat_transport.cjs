@@ -120,6 +120,19 @@ function baselineCursor(chat, openedAt) {
   const first = branch.findIndex((node) => node.message?.create_time * 1000 >= openedAt);
   return first < 0 ? chat.current_node : (branch[first - 1]?.id ?? "");
 }
+function visibleUser(node) {
+  const m = node.message;
+  return m?.author?.role === "user" && m.metadata?.is_visually_hidden_from_conversation !== true &&
+    m.metadata?.is_user_system_message !== true;
+}
+function watchAnchor(chat, cursor) {
+  const branch = selectedBranch(chat);
+  for (let i = branch.findIndex(n => n.id === cursor); i >= 0; i--) {
+    const node = branch[i];
+    if (visibleUser(node) || turnEntry(node, null, 0).text) return node.id;
+  }
+  return cursor;
+}
 function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
   const branch = selectedBranch(chat),
     index = branch.findIndex((n) => n.id === after);
@@ -129,7 +142,8 @@ function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
     confirmation?.status === "accepted" ? confirmation.message_id : null;
   let pageClosed = false,
     userId = null,
-    completed = null;
+    completed = null,
+    lastSettled = null;
   for (let i = 0; i < branch.length; i++) {
     const node = branch[i],
       m = node.message;
@@ -145,8 +159,14 @@ function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
     // An old interrupted stream can remain marked in progress indefinitely.
     // Its creation time already excludes it from this selection's replies.
     const predatesSelection = Number.isFinite(m?.create_time) && m.create_time * 1000 < openedAt;
+    if (!predatesSelection && m?.author?.role === "assistant" && m.status === "finished_partial_completion") {
+      // At the live tip this node may still be finalized in place. Once a later
+      // user or visible final exists, the partial cannot block that later turn.
+      lastSettled ??= branch.findLastIndex(n => visibleUser(n) || turnEntry(n, null, openedAt).text);
+      if (i >= lastSettled) { pageClosed = true; continue; }
+    }
     if (!predatesSelection && m?.author?.role === "assistant" &&
-        (!["finished_successfully", "finished_error", "cancelled"].includes(m.status) ||
+        (!["finished_successfully", "finished_error", "cancelled", "finished_partial_completion"].includes(m.status) ||
          (m.status === "finished_successfully" && m.metadata?.is_complete === false))) {
       pageClosed = true;
       continue;
@@ -167,6 +187,58 @@ function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
     ...(completed && !entries.some((entry) => entry.id === completed.id) ? { completed } : {}),
   };
 }
+// A completion signal names a conversation, not a branch or a WeChat turn.
+function pushPage(chat, after, openedAt, receipt, pendingUserId, anchor, baselineAnchor = false) {
+  const confirmation = receipt ? confirmReceipt(chat, receipt) : null;
+  const user = pendingUserId || confirmation?.message_id;
+  const page = { status: "page", entries: [], ...(confirmation ? { confirmation } : {}) };
+  const branch = selectedBranch(chat);
+  if (!user) {
+    if (receipt) return page;
+    if (anchor) {
+      let anchorIndex = branch.findIndex(n => n.id === anchor);
+      if (anchorIndex === -1) {
+        // Streaming snapshots can contain transient nodes which the final
+        // history replaces. A known sibling or a delivered anchor stays fenced.
+        if (!baselineAnchor || !uuid.test(anchor) || Object.hasOwn(chat.mapping, anchor) ||
+            branch.length !== Object.keys(chat.mapping).length) return page;
+        anchorIndex = branch.findIndex(n => visibleUser(n) && n.message.create_time * 1000 >= openedAt);
+        if (anchorIndex === -1) return page;
+      }
+      if (branch.findIndex(n => n.id === after) < anchorIndex) after = branch[anchorIndex].id;
+    }
+    return outgoingPage(chat, after, openedAt);
+  }
+  if (chat.mapping[user]?.message?.author?.role !== "user") return page;
+  let inTurn = false;
+  for (const node of branch) {
+    if (node.message?.author?.role === "user") inTurn = node.id === user;
+    if (!inTurn) continue;
+    const entry = turnEntry(node, user, openedAt);
+    if (entry.finished_turn) page.completed = entry;
+  }
+  if (page.completed || branch.some(node => node.id === user)) return page;
+  // The browser may now display an edited sibling. Only descendants of the
+  // original prompt qualify, and traversal stops at the next user message.
+  const children = new Map();
+  for (const node of Object.values(chat.mapping)) {
+    if (!children.has(node.parent)) children.set(node.parent, []);
+    children.get(node.parent).push(node);
+  }
+  const queue = [...(children.get(user) || [])], seen = new Set([user]), finals = [];
+  while (queue.length) {
+    const node = queue.pop();
+    if (seen.has(node.id) || node.message?.author?.role === "user") continue;
+    seen.add(node.id);
+    const entry = turnEntry(node, user, openedAt);
+    if (entry.finished_turn) finals.push(entry);
+    for (const next of children.get(node.id) || []) queue.push(next);
+  }
+  if (finals.length === 1) page.completed = finals[0];
+  if (finals.length > 1) page.ambiguous_turn = true;
+  return page;
+}
+
 async function run(input, executable, dependencies = {}) {
   if (
     !["baseline", "ready", "post", "outbox", "list"].includes(
@@ -193,7 +265,8 @@ async function run(input, executable, dependencies = {}) {
     (typeof input.after !== "string" ||
       !Number.isSafeInteger(input.opened_at) ||
       (input.receipt != null && !validReceipt(input.receipt)) ||
-      (input.pending_user_id != null && !uuid.test(input.pending_user_id)))
+      (input.pending_user_id != null && !uuid.test(input.pending_user_id)) ||
+      (input.branch_anchor != null && (typeof input.branch_anchor !== "string" || input.branch_anchor.length > 256)))
   )
     return { status: "rejected" };
   const native = dependencies.callTool ?? callTool,
@@ -264,14 +337,20 @@ async function run(input, executable, dependencies = {}) {
           .map((x) => ({ id: x.id, title: x.title.slice(0, 160) })),
       };
     }
-    if (input.operation === "outbox")
-      return outgoingPage(
-        await read(),
-        input.after,
-        input.opened_at,
-        input.receipt,
-        input.pending_user_id,
-      );
+    if (input.operation === "outbox") {
+      const chat = await read();
+      if (input.push_mode === true) {
+        const cursor = input.initial_watch ? baselineCursor(chat, input.opened_at) : input.after;
+        const page = pushPage(chat, cursor, input.opened_at, input.receipt, input.pending_user_id,
+          input.branch_anchor, input.baseline_anchor === true);
+        if (input.initial_watch) {
+          page.start_cursor = cursor;
+          page.start_anchor = watchAnchor(chat, cursor);
+        }
+        return page;
+      }
+      return outgoingPage(chat, input.after, input.opened_at, input.receipt, input.pending_user_id);
+    }
     const metadata = decode(
       await native(
         "read_thread",
@@ -288,13 +367,17 @@ async function run(input, executable, dependencies = {}) {
     if (input.operation === "post" && meta.status?.type !== "idle")
       return { status: "not_dispatched", reason: "busy" };
     const before = await read();
-    if (input.operation === "baseline")
+    if (input.operation === "baseline") {
+      const cursor = baselineCursor(before, input.opened_at);
+      const title = typeof before.title === "string" && before.title.trim() ? before.title : meta.title;
       return {
         status: "ready",
-        cursor: baselineCursor(before, input.opened_at),
-        title: String(meta.title ?? before.title ?? "").slice(0, 160),
+        cursor,
+        ...(input.push_mode === true ? { branch_anchor: watchAnchor(before, cursor) } : {}),
+        title: String(title ?? "").slice(0, 160),
         busy: meta.status?.type !== "idle",
       };
+    }
     receipt = makeReceipt(before, input.text, now());
     if (!validReceipt(receipt))
       return {
@@ -365,6 +448,7 @@ if (require.main === module) {
 }
 module.exports = {
   baselineCursor,
+  pushPage,
   outgoingPage,
   makeReceipt,
   confirmReceipt,

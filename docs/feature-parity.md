@@ -1,27 +1,33 @@
 # 现用能力对齐清单
 
-核对日期：2026-11-23，发布候选 `0.1.0-alpha.5`。本表按实际启用的路由、收发逻辑、本机通知、预览和进程生命周期核对；不以命令名称相同代替行为验收。公开源码不含个人账号、会话、房间、凭据、隧道配置或运行数据库。
+核对日期：2026-11-23，发布候选 `0.1.0-alpha.6`。本表按实际启用的路由、收发逻辑、本机通知、预览和进程生命周期核对；不以命令名称相同代替行为验收。公开源码不含个人账号、会话、房间、凭据、隧道配置或运行数据库。
 
 默认 `setup` 使用专用可见浏览器，仅需网页账号。可选 `setup:native` 使用 Windows 本机 Codex 已登录账号，提供与现用部署同类的 GPT 会话接口和个人 Dot 收发。两种模式复用同一微信渠道、持久化账本、HTML 预览和本机通知。**Dot 是可选能力，并非所有 ChatGPT 账号都具备；普通网页模式不会伪造一个 Dot 会话。**
 
-| 已启用能力 | alpha.5 行为 | 验证依据 |
+| 已启用能力 | alpha.6 行为 | 验证依据 |
 | --- | --- | --- |
 | 本人单聊文字 | 绑定扫码者，拒绝其他联系人、群、媒体、回显和不完整消息 | `wechat.test.js`、`core.test.js` |
 | 严格整行命令 | `/help`、`/where`、`/list`、`/cd`；兼容 `/switch` 和反斜杠；正文不误触发 | `core.test.js` |
 | 本地编号切换 | 保存最近一次成功的列表。按编号切换时不访问网页，首句绑定所选会话，读取和发送共同遵守限流等待时间 | `core.test.js`、`parity.test.js` |
+| 网页 WebSocket 监听 | 本机模式按所选会话过滤完成通知，再读对应最终回复；健康空闲时停止历史轮询，切换 GPT 复用连接，回到 Dot 关闭连接 | `web-chat-push.test.js`、`web-chat-push-protocol.test.cjs` |
+| 断线与限流恢复 | 通知合并、读取间隔保护、断线退避后补读；待回复低频检查，签名请求的 429 与正文和历史读取共用冷却 | `web-chat-push.test.js` |
 | 空闲回到 Dot | 已绑定 Dot 时，完整网页回复送达微信后计时，十分钟没有新微信输入就切回并通知一次。等待提交或回复期间不计时 | `parity.test.js` |
 | 会话编号、链接、UUID | 最近一次列表最多 12 项；不接受新建页或外部域名 | `core.test.js`、`browser.test.js` |
 | 默认 GPT 入口 | `/cd gpt` 返回 setup 绑定的已有会话，重启保留 | `parity.test.js` |
 | Dot 输入入口 | 本机模式显式绑定自己的个人 Dot 后启用 `/cd dot`；只在此入口发送普通文字给 Dot | `parity.test.js`、`native.test.js` |
 | 重复选择当前会话 | 不新建、不重置基线、不重复导航 | `core.test.js`、`parity.test.js` |
 | 当前标题及帮助 | `/where` 含标题、入口及未确认数量，列表和切换回复带 `/help` | `core.test.js`、`parity.test.js` |
+| 网页改名同步 | `/list` 按会话 ID 更新当前标题，重复 `/cd` 和重启后保持新标题；不重置等待状态。直接接入优先使用网页实际标题 | `web-chat-push.test.js`、`web-chat-transport.test.cjs` |
 | 最近会话列表 | 本机模式读取同一账号最近 12 项；网页模式限当前侧栏可见项 | 本机真实账号只读检查；浏览器离线检查 |
 | 切换后的 Dot 主动提醒 | Dot 出站监听独立运行，切到 GPT、GPT 忙碌时仍回传；保留 `【Dot】` 来源前缀 | `parity.test.js` |
 | GPT 完成回复独立监听 | 按原消息 ID 在当前对话分支定位最终回复。历史很长、旧回复尚未完成或读取位置已经经过目标时，同一次读取仍可找回本轮结果。按回复 ID 去重，仅转发可见的最终内容 | `native.test.js`、`parity.test.js`、`browser.test.js` |
+| 网页分支归属 | 本机模式仍按原提问 ID 找回复；网页切到其他分支时只接受原提问下唯一可确认的最终结果。多个候选只通知一次，不猜测、不重发提问 | `web-chat-transport.test.cjs`、`web-chat-push.test.js` |
+| 临时节点与旧中断回复 | 初始监听锚定稳定用户或最终节点；旧游标消失时仅在单一分支可证明时恢复。旧中断回复不阻挡更晚轮次，当前未完成回复继续等待 | `web-chat-transport.test.cjs` |
 | 慢请求不阻塞其他通道 | 微信长轮询、输入处理、GPT 监听、Dot 监听与微信投递独立调度 | `parity.test.js` |
 | 网页忙碌时排队 | 明确尚未发出的消息最多等待 10 分钟，按顺序恢复；不重试已尝试发送的消息 | `parity.test.js` |
 | 切换期间的安全边界 | 有待确认/待回答的网页消息时拒绝切换；旧监听结果不能跨会话发送；未提交旧消息不悄悄改投新入口 | `parity.test.js` |
 | 提交结果不确定 | 写前预留；本机模式最多 90 秒只读确认，限流退避并尊重 Retry-After；不重复写入或改投 Dot | `native.test.js`、`parity.test.js` |
+| 迟到回执恢复 | 本机模式确认窗口结束后保留原回执，后续完成通知可只读找回对应回复；跨重启仍不重复提交 | `web-chat-push.test.js`、`web-chat-transport.test.cjs` |
 | Dot 不确定写入 | 保留原记录，本次进程暂停新的 Dot 输入；提醒与切换到 GPT 仍可用，核对原会话后重启恢复 | `parity.test.js` |
 | 重复消息和重启恢复 | 持久来源 ID 与出站 ID；已接受请求及仍在确认窗口中的回执保留游标并恢复读取；未确认写入和未确认微信投递不重发 | `core.test.js`、`parity.test.js` |
 | 启动历史隔离 | 不补发启动前尚未接收的旧微信消息；新出站监听建立基线；已持久待处理项按状态恢复 | `core.test.js`、`parity.test.js` |
@@ -33,6 +39,7 @@
 | 持久化与容量 | 原子写入、独立私有目录、单实例锁、账号绑定；账本最多 10,000 项，满时停止而非清空去重记录 | `state.test.js`、`core.test.js`、`parity.test.js` |
 | Windows 凭据保护 | AES-GCM 保存配置/状态，随机密钥由当前 Windows 用户 DPAPI 保护；旧 JSON 无损迁移 | `control.test.js` |
 | 本机诊断与停止 | `status` 查看运行状态、`stop` 停止；`doctor` 只读检查；`unlock` 只清理已退出进程的锁 | `control.test.js`、CLI 检查 |
+| 网页请求诊断 | 本机状态增加连接阶段、建立次数、目标事件数、历史读取次数及限流剩余时间，不含签名 URL 或事件正文 | `web-chat-push.test.js` |
 | 关闭终端清理 | Windows `npm start` / `start.cmd` 使用 Job Object；宿主退出清理桥进程及其浏览器、隧道后代 | `windows-host.test.js` 实际进程测试 |
 | 本机软件更新后的定位 | 配置版本存在时保持固定；消失时只在正式安装目录中选择唯一安装/运行版本，不扫描 PATH 下载替代品 | `native.test.js` |
 

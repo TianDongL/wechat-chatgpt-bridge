@@ -6,6 +6,8 @@ import { execFileSync } from "node:child_process";
 import session from "./native/managed_chatgpt_session.cjs";
 import web from "./native/web_chat_transport.cjs";
 import dot from "./native/dot.cjs";
+import pushProtocol from "./native/web_chat_push.cjs";
+import { WebChatPush } from "./web-chat-push.js";
 import { conversationUrl } from "./commands.js";
 
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
@@ -78,6 +80,8 @@ export class NativeProvider {
     connect = session.connect,
     transport = web.run,
     resolve = resolveCodex,
+    now = Date.now,
+    listen = pushProtocol.listener,
   } = {}) {
     this.settings = settings;
     this.connect = connect;
@@ -86,6 +90,12 @@ export class NativeProvider {
     this.url = settings.defaultUrl;
     this.closed = false;
     this.dotEnabled = !!settings.dot;
+    this.push = new WebChatPush({
+      now,
+      open: (emit) => listen(this.resolve(this.settings.executable), emit, {
+        getConnection: (file) => this.connection(file),
+      }),
+    });
   }
   async connection(executable) {
     if (this.closed) throw new Error("provider_closed");
@@ -118,7 +128,7 @@ export class NativeProvider {
   }
   async select(url) {
     url = conversationUrl(url);
-    const result = await this.call("baseline", url);
+    const result = await this.baseline(url);
     if (result.status !== "ready")
       throw Object.assign(new Error("native_conversation_unavailable"), result);
     this.useTarget(url, result.title);
@@ -128,6 +138,7 @@ export class NativeProvider {
       ready: true,
       busy: result.busy,
       cursor: result.cursor,
+      branchAnchor: result.branch_anchor,
     };
   }
   async inspect() {
@@ -143,7 +154,7 @@ export class NativeProvider {
     return this.call(
       "baseline",
       url,
-      openedAt === undefined ? {} : { opened_at: openedAt },
+      { push_mode: true, ...(openedAt === undefined ? {} : { opened_at: openedAt }) },
     );
   }
   async list() {
@@ -166,8 +177,12 @@ export class NativeProvider {
       return { status: "not_dispatched", reason: "navigation_changed" };
     return this.call("post", expectedUrl, { text, request_id: requestId });
   }
-  async poll({ url, cursor, openedAt, receipt, pendingUserId }) {
+  async poll({ url, cursor, openedAt, receipt, pendingUserId, branchAnchor, baselineAnchor }) {
     return this.call("outbox", url, {
+      push_mode: true,
+      initial_watch: cursor == null,
+      branch_anchor: branchAnchor,
+      baseline_anchor: baselineAnchor === true,
       after: cursor ?? "",
       opened_at: openedAt,
       ...(receipt ? { receipt } : {}),
@@ -183,6 +198,7 @@ export class NativeProvider {
   }
   async close() {
     this.closed = true;
+    this.push.close();
   }
 }
 

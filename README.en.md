@@ -6,7 +6,7 @@ Continue your **ChatGPT web conversations from WeChat**. A visible browser on yo
 
 [中文](README.md) · [Feature parity](docs/feature-parity.md) · [Architecture](docs/architecture.md) · [Acceptance checklist](docs/acceptance.md) · [Security](SECURITY.md)
 
-**Status: `0.1.0-alpha.5` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
+**Status: `0.1.0-alpha.6` release candidate.** Intended for early adopters. A clean-machine, new-account WeChat ↔ ChatGPT conversation has not yet been accepted end to end. Automated tests do not establish real account compatibility; see the [verification boundary](docs/acceptance.md).
 
 ## Scope
 
@@ -74,6 +74,10 @@ Run `npm run setup:native` instead of ordinary setup, then `npm start`. Keep the
 
 Native mode uses the installed app sign-in in memory, reads a bounded metadata tail from the local conversation index, and validates the personal Dot room and both participants. It ships no maintainer identities. These are non-public interfaces and may change; Dot is optional and not available to every account. Native prompts are limited to 4096 UTF-8 bytes. `/cd gpt` selects your setup default; `/cd dot` selects your bound Dot. Dot reminders continue independently while GPT is selected.
 
+Starting with `alpha.6`, native mode uses a WebSocket completion notification to trigger a read of the selected conversation's final reply. A healthy idle connection no longer repeatedly fetches the full history. Switching between GPT conversations reuses the socket; returning to Dot closes it. Reconnects back off and reconcile once, with occasional reads while a reply is pending or the socket is unavailable. This reduces requests but does not guarantee freedom from 429 responses. The bridge still respects server cooldowns. The default browser mode continues using the visible page.
+
+Native `npm run status` includes `webPush` connection state, `webHistoryReads`, and `webRetryInSeconds`, without message text or conversation IDs. The web socket reports `off` while Dot is selected.
+
 `npm run status` inspects a running bridge; `npm run stop` stops it. Local programs can pass `{"request_id":"unique-id","purpose":"reminder","text":"message"}` on stdin to `node src/cli.js notify --stdin`. Supported purposes are reminder, progress, todo and test. Notifications go only to the paired owner, require a verified owner reply context for the current WeChat login and deduplicate request IDs. No recipient override or assumed Tencent context TTL is exposed. The authenticated local control port is never tunneled.
 
 ## Commands
@@ -92,6 +96,8 @@ Use `/cd` to switch conversations; `/switch` remains a compatible alias. List, c
 | `/cd <uuid>` | Select a conversation by its web ID |
 
 Numbers refer to the last successful `/list` and survive a restart. `/cd 1` selects that entry locally. If ChatGPT reports a rate limit, the next message waits for the selected conversation for up to ten minutes. Run `/list` once to populate the list. Conversation IDs come from ChatGPT web URLs.
+
+After renaming a conversation on the website, run `/list` again. If it includes the selected conversation, `/where` and a repeated `/cd` use the refreshed title without resetting the pending turn or read position.
 
 With a personal Dot bound, the bridge starts a ten-minute timer after WeChat confirms delivery of a complete web reply. After ten minutes without another owner message, it selects Dot and sends a single WeChat notice. A command restarts the timer. A new prompt waits for its own delivered reply to start a fresh timer. Dot reminders continue independently.
 

@@ -46,6 +46,9 @@ export class Bridge {
     this.nextWebPoll = 0;
     this.idleWebInterval = 30000;
     this.nextDotPoll = 0;
+    this.webReadFloor = 0;
+    this.pushSettle = false;
+    this.historyReads = 0;
     if (
       this.state.version !== 1 ||
       typeof this.state.cursor !== "string" ||
@@ -79,7 +82,29 @@ export class Bridge {
       if (r.status === "replying") r.status = "delivery_uncertain";
     }
     delete this.state.blocked;
+    if (this.state.titleSync !== 1) {
+      this.syncListTitle();
+      this.state.titleSync = 1;
+    }
+    if (this.provider.push && this.state.watch) {
+      const watch = this.state.watch;
+      watch.branchAnchor ??= watch.cursor;
+      watch.baselineAnchor ??= !this.state.records[digest(
+        `output:${watch.url}:${watch.branchAnchor}`
+      )];
+    }
     this.save();
+  }
+  syncListTitle() {
+    const item = this.listed.find((row) => row.url === this.state.selected);
+    if (item?.title?.trim()) this.state.selectedTitle = item.title;
+  }
+  syncPush() {
+    if (!this.provider.push) return;
+    this.provider.push.select(this.state.selected, this.generation);
+    this.nextWebPoll = this.now() + (this.webPending() || this.state.watch?.deferred ? 20000 : 180000);
+    this.webReadFloor = 0;
+    this.pushSettle = false;
   }
   save() {
     this.store.write("state.json", this.state);
@@ -131,7 +156,7 @@ export class Bridge {
       this.provider.useTarget?.(url, this.state.selectedTitle);
       const watch = this.state.watch;
       if (
-        !this.webWait() &&
+        !this.provider.push && !this.webWait() &&
         (watch?.url !== url ||
           (!recovering && !watch?.fromList && !watch?.deferred))
       ) {
@@ -148,12 +173,17 @@ export class Bridge {
         this.state.watch = { ...previous, deferred: true };
         this.save();
       }
+      if (this.provider.push && this.state.watch?.url !== url) {
+        this.state.watch = { url, openedAt: this.now(), deferred: true, baselineAnchor: true };
+        this.save();
+      }
     }
     if (this.provider.dotEnabled) {
       const b = await this.provider.dotCall("baseline");
       if (b.status !== "ready") throw new Error("dot_not_ready");
       this.dotWatch = { cursor: b.cursor, openedAt: this.now() };
     }
+    this.syncPush();
   }
   async resetWatch(url, selected) {
     if (!this.provider.baseline) return;
@@ -163,7 +193,10 @@ export class Bridge {
         : await this.provider.baseline(url);
     if (b.status !== "ready")
       throw Object.assign(new Error("provider_not_ready"), b);
-    this.state.watch = { url, cursor: b.cursor, openedAt: this.now() };
+    this.state.watch = {
+      url, cursor: b.cursor, openedAt: this.now(),
+      ...(this.provider.push ? { branchAnchor: b.branchAnchor ?? b.branch_anchor ?? b.cursor, baselineAnchor: true } : {}),
+    };
     this.state.selectedTitle = b.title || "";
     this.nextWebPoll = 0;
     this.save();
@@ -285,6 +318,7 @@ export class Bridge {
     this.state.selectedTitle = "";
     delete this.state.watch;
     delete this.state.idleReturn;
+    this.syncPush();
   }
   async drain({ wait = true } = {}) {
     if (this._draining) return;
@@ -462,9 +496,11 @@ export class Bridge {
             url: conversationUrl(x.url),
             title: x.title.slice(0, 160),
           }));
-          this.state.listed = items;
-          this.save();
           this.listed = items;
+          this.state.listed = items;
+          this.syncListTitle();
+          this.state.titleSync = 1;
+          this.save();
         } catch (error) {
           this.noteWebLimit(error);
           if (!this.webWait()) throw error;
@@ -523,11 +559,13 @@ export class Bridge {
         openedAt: this.now(),
         deferred: true,
         fromList: true,
+        ...(this.provider.push ? { baselineAnchor: true } : {}),
       };
       this.provider.useTarget?.(target, listed.title);
       this.nextWebPoll = 0;
       this.idleWebInterval = 30000;
       this.save();
+      this.syncPush();
       return `已切换。\n${where()}\n${this.webWait() || "正在等待连接所选网页。"}\n发送 /help 查看命令。`;
     }
     if (target !== "dot" && this.webWait())
@@ -554,6 +592,7 @@ export class Bridge {
         url: target,
         cursor: baseline.cursor,
         openedAt: this.now(),
+        ...(this.provider.push ? { branchAnchor: baseline.branchAnchor ?? baseline.branch_anchor ?? baseline.cursor, baselineAnchor: true } : {}),
       };
       this.state.selectedTitle = baseline.title || "";
       this.nextWebPoll = 0;
@@ -562,6 +601,7 @@ export class Bridge {
       this.state.selectedTitle = selected?.title || "";
     }
     this.save();
+    this.syncPush();
     return `已切换：\n${where()}\n发送 /help 查看命令。`;
   }
   async defer(key, r, result) {
@@ -624,7 +664,7 @@ export class Bridge {
     }
     if (
       this.state.selected !== "dot" &&
-      (this.webWait() || this.state.watch?.deferred)
+      (this.webWait() || (!this.provider.push && this.state.watch?.deferred))
     ) {
       r.target ??= this.state.selected;
       this.save();
@@ -685,7 +725,7 @@ export class Bridge {
         r.status = r.target === "dot" ? "submitted" : "accepted";
         delete r.text;
         this.save();
-        this.nextWebPoll = 0;
+        this.nextWebPoll = this.provider.push ? Math.min(this.nextWebPoll, this.now() + 90000) : 0;
         return;
       }
       if (result.status === "confirming" && result.receipt) {
@@ -694,7 +734,7 @@ export class Bridge {
         r.confirmUntil = this.now() + 90000;
         delete r.text;
         this.save();
-        this.nextWebPoll = 0;
+        this.nextWebPoll = this.provider.push ? Math.min(this.nextWebPoll, this.now() + 8000) : 0;
         return;
       }
       r.status = "uncertain";
@@ -828,28 +868,47 @@ export class Bridge {
     }
   }
   async pollWeb() {
+    const push = this.provider.push;
     if (
-      this._pollingWeb ||
-      this.signal?.aborted ||
-      !this.provider.poll ||
-      this.state.selected === "dot" ||
-      !this.state.watch ||
-      this.webWait() ||
-      this.now() < this.nextWebPoll ||
-      (this._submitTask && !this.provider.submit)
-    )
-      return;
+      this._pollingWeb || this.signal?.aborted || !this.provider.poll ||
+      this.state.selected === "dot" || !this.state.watch
+    ) return;
+    if (push) {
+      const event = push.take();
+      if (event.retryAfter)
+        this.noteWebLimit({ http_status: 429, retry_after: event.retryAfter });
+      if (event.dirty) {
+        this.nextWebPoll = Math.min(this.nextWebPoll, this.now() + 600);
+        this.pushSettle ||= event.dirty === "update";
+      }
+      if (!this.webWait()) push.tick();
+      if (push.status().state !== "ready" && this.nextWebPoll === Infinity)
+        this.nextWebPoll = this.now() + 180000;
+    }
+    if (
+      this.webWait() || this.now() < this.nextWebPoll ||
+      (push && this.now() < this.webReadFloor) ||
+      (this._submitTask && (push || !this.provider.submit))
+    ) return;
     this._pollingWeb = true;
-    const generation = this.generation,
-      watch = this.state.watch,
-      pending = this.webPending();
+    const generation = this.generation, watch = this.state.watch;
+    const lastRequest = push && Object.values(this.state.records).findLast(
+      (r) => r.native && r.target === watch.url && r.at >= watch.openedAt,
+    );
+    const pending = this.webPending() || (lastRequest?.status === "uncertain" &&
+      !lastRequest.ambiguous && (lastRequest.receipt || lastRequest.messageId) ? lastRequest : null);
+    const guarded = !!(push && pending);
+    const originalCursor = watch.cursor;
+    const settle = this.pushSettle;
+    this.pushSettle = false;
     try {
-      if (watch.deferred) {
+      if (watch.deferred && !push) {
         await this.connectListed(watch);
         return;
       }
       let result;
       try {
+        this.historyReads++;
         result = await this.provider.poll({
           ...watch,
           receipt: pending?.receipt,
@@ -860,98 +919,106 @@ export class Bridge {
       }
       this.noteWebLimit(result);
       if (
-        generation !== this.generation ||
-        this.state.selected !== watch.url ||
-        this.signal?.aborted
-      )
-        return;
+        generation !== this.generation || this.state.watch !== watch ||
+        this.state.selected !== watch.url || this.signal?.aborted ||
+        originalCursor !== watch.cursor
+      ) return;
       if (result.status !== "page") {
         this.webFailures = (this.webFailures || 0) + 1;
-        this.nextWebPoll =
-          this.now() +
-          Math.max(
-            Math.min(180000, 12000 * 2 ** Math.min(this.webFailures - 1, 4)),
-            (result.retry_after || 0) * 1000,
-          );
+        this.nextWebPoll = this.now() + Math.max(
+          Math.min(180000, 12000 * 2 ** Math.min(this.webFailures - 1, 4)),
+          (result.retry_after || 0) * 1000,
+        );
         return;
       }
       this.webFailures = 0;
+      if (push) {
+        if (watch.cursor == null && typeof result.start_cursor === "string") {
+          watch.cursor = result.start_cursor;
+          if (!guarded) watch.branchAnchor = result.start_anchor || watch.cursor || null;
+        }
+        delete watch.deferred;
+      }
       if (
-        pending?.status === "confirming" &&
+        pending?.receipt && ["confirming", "uncertain"].includes(pending.status) &&
         result.confirmation?.status === "accepted"
       ) {
         pending.status = "accepted";
         pending.messageId = result.confirmation.message_id;
         delete pending.receipt;
-        this.save();
       }
-      if (
-        pending?.status === "confirming" &&
-        this.now() >= pending.confirmUntil
-      ) {
+      if (pending?.status === "confirming" && this.now() >= pending.confirmUntil) {
         pending.status = "uncertain";
         this.save();
-        const key = Object.entries(this.state.records).find(
-          ([, r]) => r === pending,
-        )[0];
-        await this.notice(
-          key,
-          pending,
+        const key = Object.entries(this.state.records).find(([, r]) => r === pending)[0];
+        await this.notice(key, pending,
           "这条消息的网页提交结果暂未确认，为避免重复没有重发。请查看当前网页会话。",
-          "uncertain",
-        );
+          "uncertain");
       }
-      const completed =
-        pending?.messageId &&
-        result.completed?.user_id === pending.messageId &&
-        result.completed?.finished_turn
-          ? result.completed
-          : null;
-      for (const entry of [
-        ...result.entries,
-        ...(completed ? [completed] : []),
-      ]) {
+      if (guarded && (result.ambiguous_turn || result.confirmation?.status === "ambiguous")) {
+        pending.status = "uncertain";
+        pending.ambiguous = true;
+        watch.branchAnchor = "ambiguous:" + (pending.messageId || pending.requestId);
+        watch.baselineAnchor = false;
+        const key = Object.entries(this.state.records).find(([, r]) => r === pending)[0];
+        this.save();
+        await this.notice(key, pending,
+          "这条微信提问在网页里有多个版本，无法确定对应回复。请在网页查看。",
+          "ambiguous-turn");
+      }
+      const completed = pending?.messageId &&
+        result.completed?.user_id === pending.messageId && result.completed?.finished_turn
+        ? result.completed : null;
+      const entries = [...(guarded ? [] : result.entries), ...(completed ? [completed] : [])];
+      let observedFinal = false;
+      for (const entry of entries) {
         await this.queueOutput(watch.url, entry, watch.url);
-        if (entry.finished_turn)
-          for (const [recordKey, record] of Object.entries(
-            this.state.records,
-          )) {
+        if (entry.finished_turn) {
+          observedFinal = true;
+          for (const [recordKey, record] of Object.entries(this.state.records)) {
             if (
-              record.target === watch.url &&
-              record.messageId &&
+              record.target === watch.url && record.messageId &&
               entry.user_id === record.messageId &&
               ["accepted", "uncertain"].includes(record.status)
             ) {
               record.status = "done";
-              if (!entry.text)
-                await this.notice(
-                  recordKey,
-                  record,
-                  "当前网页这一轮已结束，但没有可回传的文字，请查看网页。",
-                  "empty-final",
-                );
+              if (!entry.text) await this.notice(recordKey, record,
+                "当前网页这一轮已结束，但没有可回传的文字，请查看网页。",
+                "empty-final");
               delete record.contextToken;
               delete record.receipt;
               delete record.text;
             }
           }
-        if (entry !== completed) this.state.watch.cursor = entry.id;
+          if (push) {
+            watch.branchAnchor = watch.cursor = entry.id;
+            watch.baselineAnchor = false;
+          }
+        }
+        if (entry !== completed) watch.cursor = entry.id;
         this.save();
       }
-      this.nextWebPoll =
-        this.now() +
-        (result.entries.length >= 10
-          ? 250
-          : (result.poll_after_ms ??
-            (this.webPending() ? 12000 : this.idleWebInterval)));
-      this.idleWebInterval =
-        result.entries.length || pending || this.webPending()
-          ? 30000
-          : Math.min(120000, this.idleWebInterval * 2);
+      this.save();
+      if (push) {
+        let delay = Infinity;
+        if (entries.length >= 10) delay = 3000;
+        else if (settle && !observedFinal) delay = 5000;
+        else if (pending?.status === "confirming") delay = Math.max(1000, Math.min(20000, pending.confirmUntil - this.now()));
+        else if (this.webPending()) delay = 90000;
+        else if (push.status().state !== "ready") delay = 180000;
+        this.nextWebPoll = this.now() + delay;
+      } else {
+        this.nextWebPoll = this.now() + (result.entries.length >= 10
+          ? 250 : (result.poll_after_ms ?? (this.webPending() ? 12000 : this.idleWebInterval)));
+        this.idleWebInterval = result.entries.length || pending || this.webPending()
+          ? 30000 : Math.min(120000, this.idleWebInterval * 2);
+      }
     } finally {
+      if (push && generation === this.generation) this.webReadFloor = this.now() + 3000;
       this._pollingWeb = false;
     }
   }
+
   async pollDot() {
     if (
       !this.dotWatch ||
@@ -1049,6 +1116,11 @@ export class Bridge {
         : null,
       contextReady: !!this.context(),
       dotEnabled: !!this.provider?.dotEnabled,
+      ...(this.provider.push ? {
+        webPush: this.provider.push.status(),
+        webHistoryReads: this.historyReads,
+        webRetryInSeconds: Math.max(0, Math.ceil(((this.state.webRetryAt || 0) - this.now()) / 1000)),
+      } : {}),
       htmlReady: !!this.preview?.ready,
       queued: Object.values(this.state.records).filter(
         (r) => r.status === "queued",

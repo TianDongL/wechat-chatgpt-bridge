@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha.6 — 2026-11-23
+
+- Use one account-verified WebSocket in Windows native mode to wake selected-conversation reads. Coalesce notifications, stop idle history polling while connected, retain pending-reply checks and reconnect fallback, and share Retry-After cooldowns with reads and submissions.
+- Reuse the connection across GPT selections and close it on manual or idle return to Dot. Dot reminders continue independently. Keep signed socket URLs and incoming account frames in memory.
+- Match replies to the original submitted user message across web branch changes. Reconcile late uncertain receipts read-only, reject ambiguous branches, and never replay the original submission.
+- Keep a stable branch anchor when temporary stream nodes disappear. Skip older interrupted replies only when a later user turn exists, so the current unfinished reply still waits for completion.
+- Refresh the selected title from `/list`, preserve titles across restart, and prefer the actual web conversation title during direct selection. Migrate existing watch state without resetting delivered-reply deduplication.
+- Add socket status and request counters, protocol and routing regression tests, and updated bilingual documentation. Existing plain-text forwarding and HTML previews remain covered by the full browser suite.
+
 ## 0.1.0-alpha.5 — 2026-11-23
 
 - Select numbered conversations from the saved list without a web request. Hold the first prompt for the selected conversation during a rate limit.

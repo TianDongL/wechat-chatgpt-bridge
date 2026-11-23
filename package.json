@@ -1,6 +1,6 @@
 {
   "name": "wechat-chatgpt-bridge",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "private": true,
   "description": "A local, owner-only WeChat bridge to ChatGPT web conversations.",
   "type": "module",
@@ -27,7 +27,7 @@
     "stop": "node src/cli.js stop",
     "notify": "node src/cli.js notify",
     "unlock": "node src/cli.js unlock",
-    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js test/pairing.test.js test/html-preview.test.js test/parity.test.js test/native.test.js test/control.test.js test/windows-host.test.js",
+    "test": "node --test test/core.test.js test/state.test.js test/wechat.test.js test/pairing.test.js test/html-preview.test.js test/parity.test.js test/native.test.js test/control.test.js test/windows-host.test.js test/web-chat-push.test.js test/web-chat-transport.test.cjs test/web-chat-push-protocol.test.cjs",
     "test:browser": "node --test test/browser.test.js test/preview-browser.test.js test/integration.test.js",
     "check:release": "node scripts/check-release.js"
   },
