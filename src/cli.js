@@ -379,10 +379,11 @@ try {
     store.acquire();
     await { setup, "setup-native": setup, start, doctor }[command]();
   } else {
+    const { version } = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     log(
-      "WeChat ChatGPT Bridge · 0.1.0-alpha.4\nnpm run setup   网页登录、HTML 预览与扫码\nnpm run setup:native   可选 Windows Codex/Dot 接入\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run status / npm run stop  本机状态 / 停止\nnpm run notify -- --stdin  从标准输入读取本人通知\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录",
+      `WeChat ChatGPT Bridge · ${version}\nnpm run setup   网页登录、HTML 预览与扫码\nnpm run setup:native   可选 Windows Codex/Dot 接入\nnpm start       运行桥（Ctrl+C 停止）\nnpm run doctor  诊断，不发送消息\nnpm run status / npm run stop  本机状态 / 停止\nnpm run notify -- --stdin  从标准输入读取本人通知\nnpm run unlock  清除已退出进程的运行锁\n可追加 -- --data-dir 独立目录`,
     );
-    if (command !== "help") process.exitCode = 2;
+    if (!["help", "--help", "-h"].includes(command)) process.exitCode = 2;
   }
 } catch (error) {
   if (!abort.signal.aborted) {
