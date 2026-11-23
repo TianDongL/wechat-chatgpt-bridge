@@ -296,12 +296,14 @@ test("three thousand pre-selection nodes need only one cursor checkpoint", () =>
   c.mapping[user] = message(user, "user", "prompt", parent);
   c.mapping[answer] = message(answer, "assistant", "reply", user);
   c.current_node = answer;
+  c.mapping["old-1500"].message.status = "in_progress";
   const result = web.outgoingPage(c, "root", 1799999999000, null, user);
   assert.deepEqual(
     result.entries.map((entry) => entry.id),
     [user, answer],
   );
   assert.equal(result.completed, undefined);
+  assert.deepEqual(web.outgoingPage(c, "root", 1799999999000).entries.map((entry) => entry.id), [user, answer]);
 });
 test("readback acknowledgement can reconcile a final already consumed before confirmation", () => {
   const before = chat(),

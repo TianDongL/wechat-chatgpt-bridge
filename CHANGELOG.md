@@ -5,6 +5,7 @@
 - Select numbered conversations from the saved list without a web request. Hold the first prompt for the selected conversation during a rate limit.
 - Allow longer conversation-detail reads within the operation deadline and retain read-only confirmation after an uncertain write.
 - Locate a pending turn's final reply in the current snapshot even when thousands of older nodes or an unfinished turn precede it.
+- Skip interrupted streams created before selection when watching for later replies.
 - When a personal Dot is configured, return to Dot after a confirmed WeChat reply and ten minutes without owner input. Persist the timer and send one WeChat notice.
 
 ## 0.1.0-alpha.4 — 2026-11-22

@@ -142,7 +142,10 @@ function outgoingPage(chat, after, openedAt, receipt, pendingUserId) {
     // page. Match it on this branch in the same snapshot, without moving the cursor.
     if (matches && entry.finished_turn) completed = entry;
     if (!onPage) continue;
-    if (m?.author?.role === "assistant" &&
+    // An old interrupted stream can remain marked in progress indefinitely.
+    // Its creation time already excludes it from this selection's replies.
+    const predatesSelection = Number.isFinite(m?.create_time) && m.create_time * 1000 < openedAt;
+    if (!predatesSelection && m?.author?.role === "assistant" &&
         (!["finished_successfully", "finished_error", "cancelled"].includes(m.status) ||
          (m.status === "finished_successfully" && m.metadata?.is_complete === false))) {
       pageClosed = true;
